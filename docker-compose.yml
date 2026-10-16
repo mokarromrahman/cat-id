@@ -1,0 +1,16 @@
+services:
+  cat-id:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      DISCORD_WEBHOOK_URL: "${DISCORD_WEBHOOK_URL}"
+      API_KEY: "${API_KEY:-}"
+      MIN_CONF: "0.75"
+    volumes:
+      - ./data:/app/data          # labeled photos: data/Litten, data/Shinx, data/neither
+      - ./inbox:/app/inbox        # new captures awaiting labels
+      - ./model.joblib:/app/model.joblib
+      - ./embeddings_cache.npz:/app/embeddings_cache.npz
+      - ./hf_cache:/app/hf_cache  # pretrained weights download once
