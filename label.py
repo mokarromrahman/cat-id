@@ -99,12 +99,25 @@ def unique_dest(folder: Path, name: str) -> Path:
     return dest
 
 
-def move_to(rel, folder, kind, title):
+def move_to(rel, folder, kind, title, detail=None):
     src = safe(rel)
     dest = unique_dest(OUT / folder, src.name)
     shutil.move(str(src), str(dest))
-    HISTORY.append(("move", dest, src, (title, src.name)))
-    log(kind, title, src.name, folder if folder in LABELS else None)
+    detail = detail or src.name
+    HISTORY.append(("move", dest, src, (title, detail)))
+    log(kind, title, detail, folder if folder in LABELS else None)
+
+
+def archive(rel):
+    """Done/skip. If crops were taken from this photo (and not undone), call it
+    "Crop done"; otherwise it is a plain "Skipped"."""
+    src = safe(rel)
+    n = sum(1 for e in HISTORY if e[0] == "crop" and e[3] == src)
+    if n:
+        detail = f"{src.name} · {n} crop{'s' if n != 1 else ''} saved · original archived"
+        move_to(rel, ARCHIVE, "done", "Crop done", detail)
+    else:
+        move_to(rel, ARCHIVE, "skip", "Skipped (archived)")
 
 
 def move(rel, label):
@@ -214,13 +227,6 @@ PAGE = """<!doctype html><meta charset=utf-8>
    100%{transform:scale(1)}}
  .bump{animation:bump .6s ease-out}
 
- /* --- toast (crop, done/skip, undo) --- */
- #toast{position:absolute;top:46px;left:50%;transform:translate(-50%,-8px);opacity:0;pointer-events:none;
-   transition:opacity .18s,transform .18s;background:rgba(22,22,22,.95);border:1px solid #3a3a3a;
-   border-left:5px solid var(--ac,#888);border-radius:10px;padding:8px 14px;font-size:14px;max-width:70%;z-index:5}
- #toast.show{opacity:1;transform:translate(-50%,0)}
- #toast small{display:block;font-size:12px;opacity:.7;margin-top:2px;word-break:break-all}
-
  /* --- history panel: chat-style, read-only --- */
  #hist{width:300px;flex:0 0 300px;display:flex;flex-direction:column;background:#161616;border-left:1px solid #2a2a2a}
  #hist.hide{display:none}
@@ -239,14 +245,13 @@ PAGE = """<!doctype html><meta charset=utf-8>
 <div id=col>
 <div id=top><span id=left></span><span id=cnt></span><button id=histbtn aria-pressed="true" aria-label="Show or hide history" onmousedown="event.preventDefault()" onclick="toggleHist()">History<kbd>H</kbd></button></div>
 <div id=stage><canvas id=view></canvas></div>
-<div id=toast></div>
 <div id=name></div>
 <div id=bar>
  <button class=b0 data-img="litten_pokemon.png" aria-label="Litten" onmousedown="event.preventDefault()" onclick="lab(0)"><span class=tip>Litten<small>1</small></span></button>
  <button class=b1 data-img="shinx_pokemon.png" aria-label="Shinx" onmousedown="event.preventDefault()" onclick="lab(1)"><span class=tip>Shinx<small>2</small></span></button>
  <button class=b2 data-img="neither.png" aria-label="neither" onmousedown="event.preventDefault()" onclick="lab(2)"><span class=tip>neither<small>3</small></span></button>
- <button class=b3 data-img="both.png" aria-label="both" onmousedown="event.preventDefault()" onclick="lab(3)"><span class=tip>both<small>4</small></span></button>
- <button class=done data-img="done_skip.png" aria-label="Done, skip" onmousedown="event.preventDefault()" onclick="done()"><span class=tip>Done, skip<small>Space</small></span></button>
+ <button class=b3 data-img="both.png" aria-label="Both" onmousedown="event.preventDefault()" onclick="lab(3)"><span class=tip>both<small>4</small></span></button>
+ <button class=done data-img="done_skip.png" aria-label="Done/Skip" onmousedown="event.preventDefault()" onclick="done()"><span class=tip>Done, skip<small>Space</small></span></button>
  <button class=undo data-img="undo.png" aria-label="Undo" onmousedown="event.preventDefault()" onclick="undo()"><span class=tip>Undo<small>U</small></span></button>
  <button id=keepbtn class=keep data-img="keep_original.png dont_keep.png" aria-label="Keep photo after crop" aria-pressed="false" onmousedown="event.preventDefault()" onclick="toggleKeep()"><span class=tip></span></button>
 </div>
@@ -264,7 +269,7 @@ const url=r=>'/img/'+r.split('/').map(encodeURIComponent).join('/');
 
 // ---------- feedback helpers ----------
 const COLORS={Litten:'#d62828',Shinx:'#f4c20d',neither:'#9a9a9a',both:'#7b4bb5'};
-const KIND_COLORS={skip:'#bdbdbd',undo:'#ff9f1c',keep:'#d4af37',error:'#ff4d4d'};
+const KIND_COLORS={skip:'#bdbdbd',done:'#6fcf97',undo:'#ff9f1c',keep:'#d4af37',error:'#ff4d4d'};
 const BTN=['.b0','.b1','.b2','.b3'];
 const accent=e=>(e.label&&COLORS[e.label])||KIND_COLORS[e.kind]||'#888';
 function restart(el,cls){el.classList.remove(cls);void el.offsetWidth;el.classList.add(cls);}
@@ -278,18 +283,6 @@ LABELS.forEach((l,i)=>{
   if(i)cntEl.append(' \\u00b7 ');
   const s=document.createElement('span');s.id='c_'+l;s.style.setProperty('--ac',COLORS[l]);s.textContent=l+' 0';cntEl.append(s);
 });
-
-// option 4: toast, only for crop / done-skip / undo (and failures)
-const TOAST_KINDS=['crop','skip','undo','error'];
-let toastTimer=null;
-function showToast(e){
-  const t=document.getElementById('toast');
-  t.replaceChildren();
-  const b=document.createElement('b');b.textContent=e.title;t.append(b);
-  if(e.detail){const s=document.createElement('small');s.textContent=e.detail;t.append(s);}
-  t.style.setProperty('--ac',accent(e));t.classList.add('show');
-  clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('show'),2400);
-}
 
 // history panel: read-only, newest at the bottom like a chat
 let histCount=0,lastId=null,pulling=Promise.resolve();
@@ -312,10 +305,9 @@ async function doPull(){
   const fresh=r.entries;
   fresh.forEach(addMsg);
   if(fresh.length){
-    if(lastId!==null){                       // skip toasts for entries that already existed at page load
-      const t=[...fresh].reverse().find(e=>TOAST_KINDS.includes(e.kind));
-      if(t)showToast(t);
-    }
+    // A failed action turns the photo flash red (it is also logged in History).
+    // Not on page load: entries that already existed then are old news.
+    if(lastId!==null&&fresh.some(e=>e.kind==='error'))pflash(KIND_COLORS.error);
     lastId=fresh[fresh.length-1].id;
   }else if(lastId===null)lastId=0;
 }
@@ -420,7 +412,7 @@ function cropBlob(){
 async function run(fn){
   if(busy)return;busy=true;
   try{await fn();await refresh();}
-  catch(err){showToast({kind:'error',title:'Lost contact with the sorter',detail:'Is label.py still running?  '+(err&&err.message||err)});}
+  catch(err){document.getElementById('name').textContent='Lost contact with the sorter. Is label.py still running?';pflash(KIND_COLORS.error);}
   finally{busy=false;}
 }
 function lab(i){
@@ -430,7 +422,7 @@ function lab(i){
     if(sel){
       const blob=await cropBlob();
       const r=await fetch('/api/crop?name='+encodeURIComponent(current)+'&label='+encodeURIComponent(LABELS[i])+'&keep='+(keep?1:0),{method:'POST',body:blob});
-      if(r.ok&&keep)sel=null;       // a failure is logged by the server and shown as a toast
+      if(r.ok&&keep)sel=null;       // a failure is logged by the server and appears in History
     }else{
       await fetch('/api/label',{method:'POST',body:JSON.stringify({name:current,label:LABELS[i]})});
     }
@@ -532,7 +524,7 @@ class Handler(BaseHTTPRequestHandler):
                     body = json.loads(raw or b"{}")
                     move(body["name"], body["label"])
                 elif url.path == "/api/archive":
-                    move_to(json.loads(raw or b"{}")["name"], ARCHIVE, "skip", "Skipped (archived)")
+                    archive(json.loads(raw or b"{}")["name"])
                 elif url.path == "/api/undo":
                     undo()
                 elif url.path == "/api/keep":   # only records the toggle in the history log
