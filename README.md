@@ -37,6 +37,7 @@ Every capture is saved to `inbox/` with the guess in its name. Label the misses 
 1. Raspberry pi
     - connect HC-SR501 and trigger on movement 
         - https://www.youtube.com/watch?v=P6mPoKdZ014
+        - https://www.amazon.ca/dp/B07X31RVJY
     - connect phone and figure out how to take photos and extract from the phone to the pi
     - send photos to the server
 2. Server
