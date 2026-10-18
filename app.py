@@ -1,9 +1,14 @@
 """Cat identification service.
 
-POST /identify   upload a photo -> JSON {cat, confidence}; also posts to Discord
+POST /identify   upload a photo -> JSON {cat, confidence}; saves it to inbox/, no Discord
+POST /litterbox  same as /identify, and also posts the result + photo to Discord
 GET  /label      page to label captured photos (grows the dataset); same page and
                  /api/* as label.py, see sorter_core.py and ui/
 POST /api/retrain  re-run training on data/ and hot-reload the model
+GET  /health     is the model loaded, which classes it knows, and how many training
+                 photos each class has in data/ (the same ones train.py reads):
+                 {"model_loaded": true, "classes": ["Litten", "Shinx", "neither"],
+                  "photos": {"Litten": 912, "Shinx": 703, "neither": 42}}
 """
 import io
 import json
@@ -26,6 +31,7 @@ DATA = Path("data")
 INBOX = Path("inbox")
 MODEL_PATH = Path("model.joblib")
 DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK_URL", "")
+PHOTO_EXTS = {".jpg", ".jpeg", ".png", ".webp"}  # same as train.py
 MIN_CONF = float(os.environ.get("MIN_CONF", "0.75"))
 API_KEY = os.environ.get("API_KEY", "")  # optional shared secret for /identify
 
@@ -63,13 +69,16 @@ def post_discord(jpeg: bytes, text: str):
         print("discord post failed:", e)
 
 
-@app.post("/identify")
-async def identify(file: UploadFile = File(...), key: str = Form("")):
+def check_request(key: str):
     if API_KEY and key != API_KEY:
         raise HTTPException(401, "bad key")
     if bundle is None:
         raise HTTPException(503, "model not trained yet")
-    raw = await file.read()
+
+
+def identify_photo(raw: bytes):
+    """Classify one photo and keep it in inbox/ for later labeling (the prediction
+    is encoded in the file name). Returns (json_result, image, discord_message)."""
     try:
         img = open_image(io.BytesIO(raw))
     except Exception:
@@ -78,7 +87,6 @@ async def identify(file: UploadFile = File(...), key: str = Form("")):
     cat, conf = classify(img)
     label = cat if conf >= MIN_CONF else "uncertain"
 
-    # Keep every capture for later labeling; prediction is encoded in the name.
     name = f"{int(time.time())}_{label}_{conf:.2f}.jpg"
     img.save(INBOX / name, quality=92)
 
@@ -88,10 +96,28 @@ async def identify(file: UploadFile = File(...), key: str = Form("")):
         msg = f"Litterbox visit: not sure which cat (best guess {cat}, {conf:.0%})."
     else:
         msg = f"**{label}** just used the litterbox ({conf:.0%} sure)."
+    result = {"cat": label, "best_guess": cat, "confidence": round(conf, 3), "saved_as": name}
+    return result, img, msg
+
+
+@app.post("/identify")
+async def identify(file: UploadFile = File(...), key: str = Form("")):
+    """Identify the cat and save the photo. Returns JSON only, no Discord post."""
+    check_request(key)
+    result, _, _ = identify_photo(await file.read())
+    return result
+
+
+@app.post("/litterbox")
+async def litterbox(file: UploadFile = File(...), key: str = Form("")):
+    """Same as /identify (same JSON, same saved photo), and also posts the result
+    and the photo to Discord. This is the one the Pi should call."""
+    check_request(key)
+    result, img, msg = identify_photo(await file.read())
     buf = io.BytesIO()
     img.save(buf, "JPEG", quality=85)
     post_discord(buf.getvalue(), msg)
-    return {"cat": label, "best_guess": cat, "confidence": round(conf, 3), "saved_as": name}
+    return result
 
 
 def class_names():
@@ -207,4 +233,12 @@ async def api_post(route: str, request: Request):
 
 @app.get("/health")
 def health():
-    return {"model_loaded": bundle is not None, "classes": bundle["classes"] if bundle else []}
+    photos = {
+        d.name: sum(1 for f in d.iterdir() if f.is_file() and f.suffix.lower() in PHOTO_EXTS)
+        for d in sorted(DATA.iterdir()) if d.is_dir()
+    } if DATA.exists() else {}
+    return {
+        "model_loaded": bundle is not None,
+        "classes": bundle["classes"] if bundle else [],
+        "photos": photos,
+    }
