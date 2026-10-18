@@ -5,10 +5,13 @@ POST /litterbox  same as /identify, and also posts the result + photo to Discord
 GET  /label      page to label captured photos (grows the dataset); same page and
                  /api/* as label.py, see sorter_core.py and ui/
 POST /api/retrain  re-run training on data/ and hot-reload the model
-GET  /health     is the model loaded, which classes it knows, and how many training
-                 photos each class has in data/ (the same ones train.py reads):
+GET  /health     is the model loaded, which classes it knows, how many training
+                 photos each class has in data/ (the same ones train.py reads), and
+                 how many captures are waiting to be sorted in inbox/ (the "N left"
+                 on /label):
                  {"model_loaded": true, "classes": ["Litten", "Shinx", "neither"],
-                  "photos": {"Litten": 912, "Shinx": 703, "neither": 42}}
+                  "photos": {"Litten": 912, "Shinx": 703, "neither": 42},
+                  "waiting_in_inbox": 17}
 """
 import io
 import json
@@ -241,4 +244,5 @@ def health():
         "model_loaded": bundle is not None,
         "classes": bundle["classes"] if bundle else [],
         "photos": photos,
+        "waiting_in_inbox": sorter.remaining(),
     }

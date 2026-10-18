@@ -112,6 +112,11 @@ class Sorter:
             items = self._pending()
             return {"remaining": len(items), "queue": items[:3], "counts": self.counts()}
 
+    def remaining(self):
+        """How many photos are still waiting to be sorted."""
+        with self.lock:
+            return len(self._pending())
+
     def file_path(self, name):
         with self.lock:
             return self._resolve(name)
