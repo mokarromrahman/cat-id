@@ -123,8 +123,8 @@ async def litterbox(file: UploadFile = File(...), key: str = Form("")):
     post_discord(buf.getvalue(), msg)
     return result
 
-@app.get("/cough")
-async def cough(cat: str = "", key: str = Form(""), info: str = "No additional info.", timestamp: str = ""):
+@app.post("/cough")
+async def cough(cat: str = Form(""), key: str = Form(""), info: str = Form("No additional info."), timestamp: str = Form("")):
     if not COUGH_DISCORD_WEBHOOK:
         return
     check_request(key)
