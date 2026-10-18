@@ -7,6 +7,7 @@ POST /retrain    re-run training on data/ and hot-reload the model
 import html
 import io
 import os
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -142,7 +143,7 @@ def label(name: str = Form(...), label: str = Form(...)):
             raise HTTPException(400, "unknown class")
         dest = DATA / label
         dest.mkdir(parents=True, exist_ok=True)
-        src.rename(dest / src.name)
+        shutil.move(str(src), str(dest / src.name))
     return RedirectResponse("/label", status_code=303)
 
 
