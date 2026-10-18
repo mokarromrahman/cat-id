@@ -1,0 +1,88 @@
+/* Shared by label.py (Mac sorter) and app.py (/label on the server). */
+body{margin:0;font-family:system-ui;background:#111;color:#eee;display:flex;height:100vh;height:100dvh;user-select:none}
+#col{flex:1;min-width:0;display:flex;flex-direction:column;position:relative}
+#top{padding:10px 16px;display:flex;align-items:center;gap:14px;font-size:15px}
+#left{flex:0 0 auto;opacity:.85}
+#cnt{flex:1;text-align:right;opacity:.85}
+#cnt span{display:inline-block}
+#stage{flex:1;display:flex;align-items:center;justify-content:center;min-height:0;padding:0 12px;overflow:hidden}
+#view{border-radius:6px;cursor:crosshair;touch-action:none}
+#name{text-align:center;font-size:12px;opacity:.6;padding:4px}
+#bar{display:flex;gap:10px;padding:12px;justify-content:center;flex-wrap:wrap;align-items:center}
+
+/* big picture buttons (labels, done, undo, keep) */
+button{border:0;border-radius:12px;cursor:pointer;color:#fff;width:120px;height:90px;padding:0;touch-action:manipulation;
+  background:#333 center/contain no-repeat;display:flex;align-items:flex-end;justify-content:center}
+button:hover{filter:brightness(1.1)}
+button[hidden]{display:none!important}
+/* small text buttons in the top bar */
+button.sm{width:auto;height:auto;padding:6px 12px;font-size:13px;border-radius:8px;background:#2a2a2a;display:inline-block}
+button.sm:disabled{opacity:.5;cursor:default}
+#histbtn[aria-pressed=true]{background:#454545}
+button.danger{background:#5a2a2a}
+button kbd{font:inherit;font-size:11px;opacity:.6;margin-left:4px}
+#histbtn kbd{font:inherit;font-size:11px;opacity:.6;margin-left:4px}
+#rotl,#rotr{font-size:17px;line-height:1;padding:4px 10px}
+
+.tip{opacity:0;transition:opacity .12s;pointer-events:none;margin-bottom:6px;padding:3px 10px;border-radius:8px;
+  background:rgba(0,0,0,.72);font-size:16px;line-height:1.25;text-align:center;white-space:nowrap}
+.tip small{display:block;font-size:11px;opacity:.75}
+button:hover .tip,button.noimg .tip{opacity:1}   /* no artwork found: always show the label */
+
+/* artwork + colour per label (label.js adds one button per label name) */
+button.lbl{background-color:#444}
+button.lbl[data-label="Litten"]{background-image:url(/asset/litten_pokemon.png);background-color:#d62828}
+button.lbl[data-label="Shinx"]{background-image:url(/asset/shinx_pokemon.png);background-color:#f4c20d}
+button.lbl[data-label="neither"]{background-image:url(/asset/neither.png);background-color:#555}
+button.lbl[data-label="both"]{background-image:url(/asset/both.png);background-color:#7b4bb5}
+.done{background-image:url(/asset/done_skip.png);background-color:#333}
+.undo{background-image:url(/asset/undo.png);background-color:#333}
+.keep{background-image:url(/asset/dont_keep.png);background-color:#555}
+.keep.on{background-image:url(/asset/keep_original.png);background-color:#d4af37}
+
+/* --- feedback: ring flash on the button, colour flash around the photo, counter bump --- */
+@keyframes ring{
+  0%{transform:scale(.94);box-shadow:0 0 0 0 rgba(255,255,255,.95),0 0 18px 4px rgba(255,255,255,.7)}
+  40%{transform:scale(1.03)}
+  100%{transform:scale(1);box-shadow:0 0 0 10px rgba(255,255,255,0),0 0 18px 4px rgba(255,255,255,0)}}
+button.ring{animation:ring .38s ease-out}
+@keyframes pf{
+  0%{box-shadow:0 0 0 8px var(--fc),0 0 26px 8px var(--fc)}
+  100%{box-shadow:0 0 0 8px transparent,0 0 26px 8px transparent}}
+#view.pflash{animation:pf .5s ease-out}
+@keyframes bump{
+  0%{transform:scale(1)}
+  35%{transform:scale(1.35);color:#fff;text-shadow:0 0 10px var(--ac)}
+  100%{transform:scale(1)}}
+.bump{animation:bump .6s ease-out}
+
+/* --- history panel: chat-style, read-only --- */
+#hist{width:300px;flex:0 0 300px;display:flex;flex-direction:column;background:#161616;border-left:1px solid #2a2a2a}
+#hist.hide{display:none}
+#hhead{padding:12px 14px;font-size:14px;font-weight:600;border-bottom:1px solid #2a2a2a;display:flex;justify-content:space-between;align-items:baseline}
+#hhead small{font-weight:400;opacity:.55;font-size:12px}
+#hlist{flex:1;overflow-y:auto;padding:10px;display:flex;flex-direction:column;gap:8px;user-select:text}
+#hlist .empty{opacity:.45;font-size:13px;text-align:center;margin-top:24px}
+@keyframes pop{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.msg{background:#232323;border-radius:12px 12px 12px 3px;padding:7px 10px;border-left:4px solid var(--ac,#888);animation:pop .2s ease-out}
+.msg .row{display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+.msg b{font-size:13px}
+.msg time{font-size:11px;opacity:.5;white-space:nowrap}
+.msg .d{font-size:12px;opacity:.65;margin-top:2px;word-break:break-all}
+#hfoot{padding:8px 14px;font-size:11px;opacity:.5;border-top:1px solid #2a2a2a;text-align:center}
+
+/* --- touch screens have no hover, so show the button labels all the time --- */
+@media (hover:none){.tip{opacity:1}}
+
+/* --- phones / narrow windows: smaller buttons, history slides up over the bottom --- */
+@media (max-width:760px){
+  #top{flex-wrap:wrap;gap:8px 10px;padding:8px 12px}
+  #cnt{order:9;flex-basis:100%;text-align:left;font-size:14px}
+  #left{flex:1}
+  #bar{gap:6px;padding:8px}
+  #bar button{width:calc(25% - 6px);max-width:100px;height:68px}
+  .tip{font-size:12px;padding:2px 6px;margin-bottom:3px}
+  .tip small{display:none}
+  #hist{position:fixed;left:0;right:0;bottom:0;width:auto;height:50vh;height:50dvh;z-index:5;
+    border-left:0;border-top:1px solid #2a2a2a;box-shadow:0 -10px 28px rgba(0,0,0,.55)}
+}

@@ -1,22 +1,25 @@
 """Cat identification service.
 
 POST /identify   upload a photo -> JSON {cat, confidence}; also posts to Discord
-GET  /label      mobile-friendly page to label captured photos (grows the dataset)
-POST /retrain    re-run training on data/ and hot-reload the model
+GET  /label      page to label captured photos (grows the dataset); same page and
+                 /api/* as label.py, see sorter_core.py and ui/
+POST /api/retrain  re-run training on data/ and hot-reload the model
 """
-import html
 import io
+import json
 import os
-import shutil
 import subprocess
+import threading
 import time
 from pathlib import Path
+from urllib.parse import parse_qs
 
 import joblib
 import requests
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
+import sorter_core
 from embed import embed, open_image
 
 DATA = Path("data")
@@ -91,69 +94,115 @@ async def identify(file: UploadFile = File(...), key: str = Form("")):
     return {"cat": label, "best_guess": cat, "confidence": round(conf, 3), "saved_as": name}
 
 
-@app.get("/inbox/{name}")
-def inbox_file(name: str):
-    p = INBOX / Path(name).name
-    if not p.exists():
-        raise HTTPException(404)
-    return FileResponse(p)
-
-
 def class_names():
     names = sorted(p.name for p in DATA.iterdir() if p.is_dir()) if DATA.exists() else []
     return names or ["Litten", "Shinx", "neither"]
 
 
-@app.get("/label", response_class=HTMLResponse)
-def label_page():
-    files = sorted(INBOX.glob("*.jpg"), reverse=True)[:30]
-    rows = []
-    for f in files:
-        btns = "".join(
-            f'<button name="label" value="{html.escape(c)}">{html.escape(c)}</button>'
-            for c in class_names()
-        )
-        rows.append(
-            f'<form method="post" action="/label" class="card">'
-            f'<img src="/inbox/{f.name}"><div class="guess">{html.escape(f.stem)}</div>'
-            f'<input type="hidden" name="name" value="{f.name}">{btns}'
-            f'<button name="label" value="__delete__" class="del">delete</button></form>'
-        )
-    body = "".join(rows) or "<p>Inbox empty. Nothing to label.</p>"
-    return f"""<!doctype html><meta name=viewport content="width=device-width,initial-scale=1">
-<title>Label cats</title>
-<style>body{{font-family:system-ui;margin:12px;background:#111;color:#eee}}
-.card{{background:#1c1c1c;border-radius:12px;padding:10px;margin-bottom:14px}}
-img{{width:100%;border-radius:8px}}.guess{{font-size:12px;opacity:.6;margin:4px 0}}
-button{{font-size:18px;padding:12px 16px;margin:4px 4px 0 0;border-radius:10px;border:0}}
-.del{{background:#5a2a2a;color:#fff}}</style>
-<h2>Label captures ({len(files)} shown)</h2>{body}
-<form method="post" action="/retrain"><button>Retrain model now</button></form>"""
+# ---------- /label: the same page and API as label.py (logic in sorter_core.py) ----------
+sorter = sorter_core.inbox_sorter(DATA, INBOX, class_names, retrain=True, delete=True)
+NO_CACHE = {"Cache-Control": "no-cache"}
 
 
-@app.post("/label")
-def label(name: str = Form(...), label: str = Form(...)):
-    src = INBOX / Path(name).name
-    if not src.exists():
+def _file(path, **kw):
+    if path is None:
         raise HTTPException(404)
-    if label == "__delete__":
-        src.unlink()
-    else:
-        if label not in class_names():
-            raise HTTPException(400, "unknown class")
-        dest = DATA / label
-        dest.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(src), str(dest / src.name))
-    return RedirectResponse("/label", status_code=303)
+    return FileResponse(path, **kw)
 
 
-@app.post("/retrain")
+@app.get("/label")
+def label_page():
+    return _file(sorter_core.ui_file("label.html"), media_type="text/html", headers=NO_CACHE)
+
+
+@app.get("/ui/{name}")
+def ui_file(name: str):
+    return _file(sorter_core.ui_file(name), headers=NO_CACHE)
+
+
+@app.get("/asset/{name}")
+def asset(name: str):
+    return _file(sorter_core.asset_file(name), headers={"Cache-Control": "private, max-age=600"})
+
+
+@app.get("/img/{name:path}")
+def img(name: str):
+    try:
+        p = sorter.file_path(name)
+    except FileNotFoundError:
+        raise HTTPException(404)
+    return FileResponse(p, headers={"Cache-Control": "private, max-age=600"})
+
+
+@app.get("/api/config")
+def api_config():
+    return sorter.config()
+
+
+@app.get("/api/state")
+def api_state():
+    return sorter.state()
+
+
+@app.get("/api/log")
+def api_log(since: int = 0):
+    return sorter.log_since(since)
+
+
+retrain_lock = threading.Lock()
+
+
+def run_retrain():
+    """Re-run train.py and hot-reload the model. Returns (http_status, json_dict)."""
+    if not retrain_lock.acquire(blocking=False):
+        sorter.log("error", "Retrain already running")
+        return 409, {"error": "busy"}
+    try:
+        sorter.log("retrain", "Retraining started", "this can take a few minutes")
+        r = subprocess.run(["python", "train.py"], capture_output=True, text=True)
+        load_model()
+        if r.returncode != 0:
+            sorter.log("error", "Retrain failed", r.stderr[-300:])
+            return 500, {"error": r.stderr[-2000:]}
+        tail = [l for l in r.stdout.splitlines() if l.strip()]
+        sorter.log("done", "Retrain finished", "\n".join(tail[-2:]))
+        return 200, {}
+    finally:
+        retrain_lock.release()
+
+
+@app.post("/api/retrain")  # used by the Retrain button on the page
+def api_retrain():
+    code, body = run_retrain()
+    return JSONResponse(body, status_code=code)
+
+
+@app.post("/retrain")  # the original endpoint, unchanged for curl/cron: redirects back to /label
 def retrain():
-    r = subprocess.run(["python", "train.py"], capture_output=True, text=True)
-    load_model()
-    if r.returncode != 0:
-        raise HTTPException(500, r.stderr[-2000:])
+    code, body = run_retrain()
+    if code != 200:
+        raise HTTPException(code, body["error"])
     return RedirectResponse("/label", status_code=303)
+
+
+@app.post("/label")  # the original form endpoint: name + label ("__delete__" deletes)
+def label_form(name: str = Form(...), label: str = Form(...)):
+    route = "delete" if label == "__delete__" else "label"
+    code, body = sorter.handle_post(route, {}, json.dumps({"name": name, "label": label}).encode())
+    if code != 200:
+        raise HTTPException(400, body.get("error", "failed"))
+    return RedirectResponse("/label", status_code=303)
+
+
+@app.get("/inbox/{name}")  # the original photo URL (same as /img/<name>)
+def inbox_file(name: str):
+    return img(name)
+
+
+@app.post("/api/{route}")  # label, crop, archive, undo, keep
+async def api_post(route: str, request: Request):
+    code, body = sorter.handle_post(route, parse_qs(request.url.query), await request.body())
+    return JSONResponse(body, status_code=code)
 
 
 @app.get("/health")

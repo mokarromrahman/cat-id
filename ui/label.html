@@ -1,0 +1,30 @@
+<!doctype html>
+<meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>Cat sorter</title>
+<link rel=stylesheet href="/ui/label.css">
+<div id=col>
+ <div id=top>
+  <span id=left></span>
+  <span id=cnt></span>
+  <button class=sm id=rotl aria-label="Rotate left" onmousedown="event.preventDefault()" onclick="rotate(-1)">&#8634;</button>
+  <button class=sm id=rotr aria-label="Rotate right" onmousedown="event.preventDefault()" onclick="rotate(1)">&#8635;</button>
+  <button class="sm danger" id=delbtn hidden aria-label="Delete this photo" onmousedown="event.preventDefault()" onclick="trash()">Delete<kbd>Del</kbd></button>
+  <button class=sm id=retrain hidden aria-label="Retrain the model" onmousedown="event.preventDefault()" onclick="retrain()">Retrain</button>
+  <button class=sm id=histbtn aria-pressed="true" aria-label="Show or hide history" onmousedown="event.preventDefault()" onclick="toggleHist()">History<kbd>H</kbd></button>
+ </div>
+ <div id=stage><canvas id=view></canvas></div>
+ <div id=name></div>
+ <div id=bar>
+  <!-- one button per label is added by label.js, then these three -->
+  <button class=done data-img="done_skip.png" aria-label="Done/Skip" onmousedown="event.preventDefault()" onclick="done()"><span class=tip>Done, skip<small>Space</small></span></button>
+  <button class=undo data-img="undo.png" aria-label="Undo" onmousedown="event.preventDefault()" onclick="undo()"><span class=tip>Undo<small>U</small></span></button>
+  <button id=keepbtn class=keep data-img="keep_original.png dont_keep.png" aria-label="Keep photo after crop" aria-pressed="false" onmousedown="event.preventDefault()" onclick="toggleKeep()"><span class=tip></span></button>
+ </div>
+</div>
+<aside id=hist>
+ <div id=hhead><span>History</span><small id=hcount>0 actions</small></div>
+ <div id=hlist><div class=empty>Nothing yet. Your actions will appear here.</div></div>
+ <div id=hfoot>Read-only log of this session</div>
+</aside>
+<script src="/ui/label.js"></script>
