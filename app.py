@@ -34,6 +34,7 @@ DATA = Path("data")
 INBOX = Path("inbox")
 MODEL_PATH = Path("model.joblib")
 DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK_URL", "")
+COUGH_DISCORD_WEBHOOK = os.environ.get("COUGH_DISCORD_WEBHOOK_URL", "")
 PHOTO_EXTS = {".jpg", ".jpeg", ".png", ".webp"}  # same as train.py
 MIN_CONF = float(os.environ.get("MIN_CONF", "0.75"))
 API_KEY = os.environ.get("API_KEY", "")  # optional shared secret for /identify
@@ -122,6 +123,20 @@ async def litterbox(file: UploadFile = File(...), key: str = Form("")):
     post_discord(buf.getvalue(), msg)
     return result
 
+@app.get("/cough")
+async def cough(cat: str = "", key: str = Form(""), info: str = "No additional info.", timestamp: str = ""):
+    if not COUGH_DISCORD_WEBHOOK:
+        return
+    check_request(key)
+    msg = f"**{cat}** just had cough attack at {timestamp}. Additional info: {info}"
+    try:
+        requests.post(
+            COUGH_DISCORD_WEBHOOK,
+            data={"content": msg},
+            timeout=15,
+        )
+    except requests.RequestException as e:
+        print("discord post failed:", e)
 
 def class_names():
     names = sorted(p.name for p in DATA.iterdir() if p.is_dir()) if DATA.exists() else []

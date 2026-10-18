@@ -6,6 +6,7 @@ services:
       - "8000:8000"
     environment:
       DISCORD_WEBHOOK_URL: "${DISCORD_WEBHOOK_URL}"
+      COUGH_DISCORD_WEBHOOK_URL: "${COUGH_DISCORD_WEBHOOK_URL}"
       API_KEY: "${API_KEY:-}"
       MIN_CONF: "0.75"
     volumes:

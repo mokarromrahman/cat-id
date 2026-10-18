@@ -18,6 +18,7 @@ each cat by hand, train, then let the model pre-sort the rest into the inbox.
 
 ## 3. Run
     export DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
+    export COUGH_DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
     export API_KEY=choose-a-secret
     docker compose up -d --build
 
