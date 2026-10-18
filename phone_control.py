@@ -137,7 +137,8 @@ def main():
 
                 # 3. This tells macOS to open the image directly in 'Preview' app
                 print("Displaying image directly from RAM buffer...")
-                image.show()
+                #image.show()
+                print(f"Success! Captured and streamed {filename} completely into RAM buffer.")
             except Exception as e:
                 print(f"Error displaying image: {e}")
 
