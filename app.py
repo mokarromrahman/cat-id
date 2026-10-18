@@ -21,6 +21,8 @@ import threading
 import time
 from pathlib import Path
 from urllib.parse import parse_qs
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import joblib
 import requests
@@ -38,6 +40,7 @@ COUGH_DISCORD_WEBHOOK = os.environ.get("COUGH_DISCORD_WEBHOOK_URL", "")
 PHOTO_EXTS = {".jpg", ".jpeg", ".png", ".webp"}  # same as train.py
 MIN_CONF = float(os.environ.get("MIN_CONF", "0.75"))
 API_KEY = os.environ.get("API_KEY", "")  # optional shared secret for /identify
+EDMONTON_TZ = ZoneInfo("America/Edmonton") 
 
 INBOX.mkdir(exist_ok=True)
 app = FastAPI(title="cat-id")
@@ -124,10 +127,11 @@ async def litterbox(file: UploadFile = File(...), key: str = Form("")):
     return result
 
 @app.post("/cough")
-async def cough(cat: str = Form(""), key: str = Form(""), info: str = Form("No additional info."), timestamp: str = Form("")):
+async def cough(cat: str = Form(""), key: str = Form(""), info: str = Form("No additional info.")):
     if not COUGH_DISCORD_WEBHOOK:
         return
     check_request(key)
+    timestamp = datetime.now(EDMONTON_TZ).strftime("%Y-%m-%d %H:%M:%S %Z")
     msg = f"**{cat}** just had cough attack at {timestamp}. Additional info: {info}"
     try:
         requests.post(
@@ -137,6 +141,7 @@ async def cough(cat: str = Form(""), key: str = Form(""), info: str = Form("No a
         )
     except requests.RequestException as e:
         print("discord post failed:", e)
+    return {"status": 200, "cat": cat, "message": "Cough report sent to Discord."}
 
 def class_names():
     names = sorted(p.name for p in DATA.iterdir() if p.is_dir()) if DATA.exists() else []
