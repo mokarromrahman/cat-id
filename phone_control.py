@@ -3,7 +3,7 @@ import tempfile
 import os
 import io
 from ppadb.client import Client as AdbClient
-from PIL import Image
+#from PIL import Image
 
 class PhoneController(AdbClient):
     def __init__(self, host="127.0.0.1", port=5037):
@@ -133,9 +133,9 @@ def main():
         if image_buffer:
             try:
                 # 2. Tell Pillow to open and process the image directly out of RAM
-                image = Image.open(image_buffer)
+                #image = Image.open(image_buffer)
 
-                # 3. This tells macOS to open the image directly in 'Preview' app
+                # 3. This tells macOS to open the image directly in 'Preview' app -  does not work on raspberry pi or linux
                 print("Displaying image directly from RAM buffer...")
                 #image.show()
                 print(f"Success! Captured and streamed {filename} completely into RAM buffer.")
