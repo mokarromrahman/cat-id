@@ -13,7 +13,7 @@ import requests
 from gpiozero import MotionSensor
 
 PHONE_SNAPSHOT = os.environ.get("PHONE_SNAPSHOT", "http://192.168.1.50:8080/photoaf.jpg")
-SERVER = os.environ.get("SERVER", "http://192.168.1.60:8000/identify")
+SERVER = os.environ.get("SERVER", "http://192.168.1.60:8000/litterbox")
 API_KEY = os.environ.get("API_KEY", "")
 COOLDOWN = 20  # seconds; stops one visit from firing many alerts
 
