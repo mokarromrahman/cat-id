@@ -141,6 +141,7 @@ async def cough(cat: str = Form(""), key: str = Form(""), info: str = Form("No a
         )
     except requests.RequestException as e:
         print("discord post failed:", e)
+        return {"status": 500, "cat": cat, "message": f"Failed to send cough report to Discord: {e}", "timestamp": timestamp}
     return {"status": 200, "cat": cat, "message": "Cough report sent to Discord."}
 
 def class_names():
