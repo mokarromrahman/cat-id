@@ -53,6 +53,19 @@ The app asks for the first one when you open it, then remembers them until you r
    "install unknown apps" for whatever app they opened it from. They add their own server
    and key; nothing is shared between phones.
 
+## Changing the app icon
+
+The icon is made from `img_src/app_icon.jpg` by `make_icon.py`. To use a different photo,
+or frame this one differently (change `CX`, `CY`, `R` at the top of the script):
+
+```bash
+cd cat_id_app
+pip install pillow
+python3 make_icon.py ../img_src/app_icon.jpg preview.png   # preview.png shows the result
+```
+
+Then rebuild the app. Some launchers keep the old icon until the phone restarts.
+
 ## If something goes wrong
 
 - **"Can't reach 192.168.x.x:8000":** the phone must be on the home Wi-Fi, and

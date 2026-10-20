@@ -21,7 +21,7 @@ class WelcomeScreen extends StatelessWidget {
               children: [
                 const Icon(Icons.pets, size: 72),
                 const SizedBox(height: 16),
-                Text('Cat ID', style: Theme.of(context).textTheme.headlineMedium),
+                Text('Kitten Dex', style: Theme.of(context).textTheme.headlineMedium),
                 const SizedBox(height: 8),
                 const Text(
                   "Add the address of your cat-id server to get started, e.g. 192.168.1.116. "

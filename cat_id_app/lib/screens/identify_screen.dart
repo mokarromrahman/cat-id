@@ -4,16 +4,21 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../api.dart';
+import '../camera_recovery.dart';
 import '../server_store.dart';
 
 /// Pick or take a photo, then ask the server who it is.
 ///  - "Identify" calls /identify (JSON only).
 ///  - "Identify + send to Discord" calls /litterbox (same, and posts to Discord).
 class IdentifyScreen extends StatefulWidget {
-  const IdentifyScreen({super.key, required this.store, required this.server});
+  const IdentifyScreen(
+      {super.key, required this.store, required this.server, this.recoveredPhoto});
 
   final ServerStore store;
   final Server server;
+
+  /// A camera photo recovered after Android closed the app (see camera_recovery.dart).
+  final LostDataResponse? recoveredPhoto;
 
   @override
   State<IdentifyScreen> createState() => _IdentifyScreenState();
@@ -26,11 +31,38 @@ class _IdentifyScreenState extends State<IdentifyScreen> {
   bool _resultWentToDiscord = false;
   String? _error;
 
+  @override
+  void initState() {
+    super.initState();
+    _useRecovered(widget.recoveredPhoto);
+  }
+
+  @override
+  void didUpdateWidget(IdentifyScreen old) {
+    super.didUpdateWidget(old);
+    if (widget.recoveredPhoto != old.recoveredPhoto) {
+      setState(() => _useRecovered(widget.recoveredPhoto));
+    }
+  }
+
+  void _useRecovered(LostDataResponse? lost) {
+    if (lost == null) return;
+    if (lost.file != null) {
+      _photo = lost.file;
+      _result = null;
+      _error = null;
+    } else if (lost.exception != null) {
+      _error = 'Could not get the photo from the camera: ${lost.exception!.message}';
+    }
+  }
+
   Future<void> _pick(ImageSource source) async {
     try {
+      if (source == ImageSource.camera) await CameraRecovery.markOpened();
       // Shrinking here makes the upload quick; the model only looks at a small version anyway.
       final f = await ImagePicker()
           .pickImage(source: source, maxWidth: 1600, imageQuality: 90);
+      if (source == ImageSource.camera) await CameraRecovery.markReturned();
       if (f == null) return; // cancelled
       setState(() {
         _photo = f;

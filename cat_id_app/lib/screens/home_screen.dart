@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 
+import '../camera_recovery.dart';
 import '../server_store.dart';
 import 'cough_screen.dart';
 import 'health_screen.dart';
@@ -34,6 +36,19 @@ class _HomeScreenState extends State<HomeScreen> {
   /// Tabs are built the first time you open them (the Label tab loads a web page).
   final Set<AppTab> _visited = {kTabOrder.first};
 
+  /// A camera photo from before Android closed the app (see camera_recovery.dart).
+  LostDataResponse? _recoveredPhoto;
+
+  @override
+  void initState() {
+    super.initState();
+    CameraRecovery.recover().then((lost) {
+      if (lost == null || !mounted) return;
+      _recoveredPhoto = lost;
+      _goTo(AppTab.identify);
+    });
+  }
+
   /// Bumped each time you arrive on Label or Health, so they load fresh from the server.
   /// (Identify and Cough keep what you typed or picked.)
   final Map<AppTab, int> _gen = {AppTab.label: 0, AppTab.health: 0};
@@ -55,7 +70,10 @@ class _HomeScreenState extends State<HomeScreen> {
     switch (t) {
       case AppTab.identify:
         return IdentifyScreen(
-            key: ValueKey('identify-$tag'), store: widget.store, server: server);
+            key: ValueKey('identify-$tag'),
+            store: widget.store,
+            server: server,
+            recoveredPhoto: _recoveredPhoto);
       case AppTab.label:
         return LabelScreen(key: ValueKey('label-$tag-${_gen[t]}'), server: server);
       case AppTab.health:
