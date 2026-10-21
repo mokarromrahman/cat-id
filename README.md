@@ -33,25 +33,4 @@ Install an "IP Webcam" style app on the S20 FE (serves a still at
 ## 5. Improve over time
 Every capture is saved to `inbox/` with the guess in its name. Label the misses at
 /label, then press "Retrain model now".
-
-## TODO:
-1. Raspberry pi
-    - connect HC-SR501 and trigger on movement 
-        - https://www.youtube.com/watch?v=P6mPoKdZ014
-        - https://www.amazon.ca/dp/B07X31RVJY
-    - connect phone and figure out how to take photos and extract from the phone to the pi
-    - send photos to the server
-2. Server
-    - train model
-    - get discord webhook
-    - create api key (jwt?)
-        - does this key need to be saved in local .env file?
-        - does the pi need one too?
-3. Analytics
-    - time and day analytics 
-    - grafana dashboard for events?
-    - discord or email alerts when cats haven't gone in {x} amount of hours?
-    - what would vets care about seeing?
-    - alerts for when the litterbox is cleaned?
-        - alerts for when the litterbox hasn't been cleaned for {x} number of days?
     
