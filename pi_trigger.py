@@ -32,6 +32,7 @@ sensor = MotionSensor(17)
 
 
 while True:
+    print("waiting for motion...")
     sensor.wait_for_motion()
     time.sleep(1.5)  # let the cat settle into frame
     try:
