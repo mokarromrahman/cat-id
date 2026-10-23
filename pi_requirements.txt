@@ -1,1 +1,4 @@
 pure-python-adb
+gpiozero
+lgpio        # Bookworm or newer; use RPi.GPIO instead on older Pi OS
+requests
