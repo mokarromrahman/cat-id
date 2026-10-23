@@ -9,7 +9,7 @@ Install: sudo apt install python3-gpiozero python3-requests
 import os
 import time
 
-#import requests
+import requests
 from gpiozero import MotionSensor
 
 from phone_control import PhoneController, trigger_covert_photo
@@ -35,19 +35,17 @@ phone = PhoneController()
 
 def capture_and_send(phone: PhoneController):
     trigger_covert_photo(phone)
-    # image_buffer, filename = phone.fetch_most_recent_photo()
-    # if image_buffer:
-    #     try:
-    #         # 4. Send the image to the server
-    #         # r = requests.post(
-    #         #     SERVER,
-    #         #     files={"file": (filename, image_buffer, "image/jpeg")},
-    #         #     data={"key": API_KEY},
-    #         #     timeout=60,
-    #         # )
-    #         # print(time.strftime("%H:%M:%S"), r.status_code, r.text)
-    #     except Exception as e:
-    #         print("capture failed:", e)
+    image_buffer, filename = phone.fetch_most_recent_photo()
+    if image_buffer:
+        try:
+            r = requests.post(
+                SERVER,
+                files={"file": (filename, image_buffer, "image/jpeg")},
+                data={"key": API_KEY},
+                timeout=60,
+            )
+        except Exception as e:
+            print("capture failed:", e)
 
 
 while True:
@@ -56,7 +54,7 @@ while True:
     time.sleep(1.5)  # let the cat settle into frame
     try:
         print("motion detected")
-        trigger_covert_photo(phone)
+        capture_and_send(phone)
     except Exception as e:
         print("capture failed:", e)
     time.sleep(COOLDOWN)
