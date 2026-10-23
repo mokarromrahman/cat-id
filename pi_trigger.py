@@ -13,6 +13,9 @@ import requests
 from gpiozero import MotionSensor
 
 from phone_control import PhoneController, trigger_covert_photo
+from dotenv import load_dotenv
+
+load_dotenv()
 
 SERVER = os.environ.get("SERVER", "http://192.168.1.116:8000/litterbox")
 API_KEY = os.environ.get("API_KEY", "")
