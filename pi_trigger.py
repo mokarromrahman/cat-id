@@ -12,12 +12,15 @@ import time
 #import requests
 from gpiozero import MotionSensor
 
+from phone_control import PhoneController, trigger_covert_photo
+
 SERVER = os.environ.get("SERVER", "http://192.168.1.116:8000/litterbox")
 API_KEY = os.environ.get("API_KEY", "")
 COOLDOWN = 20  # seconds; stops one visit from firing many alerts
 
 sensor = MotionSensor(17)
 
+phone = PhoneController()
 
 # def capture_and_send():
 #     shot = requests.get(PHONE_SNAPSHOT, timeout=10)
@@ -30,14 +33,30 @@ sensor = MotionSensor(17)
 #     )
 #     print(time.strftime("%H:%M:%S"), r.status_code, r.text)
 
+def capture_and_send(phone: PhoneController):
+    trigger_covert_photo(phone)
+    # image_buffer, filename = phone.fetch_most_recent_photo()
+    # if image_buffer:
+    #     try:
+    #         # 4. Send the image to the server
+    #         # r = requests.post(
+    #         #     SERVER,
+    #         #     files={"file": (filename, image_buffer, "image/jpeg")},
+    #         #     data={"key": API_KEY},
+    #         #     timeout=60,
+    #         # )
+    #         # print(time.strftime("%H:%M:%S"), r.status_code, r.text)
+    #     except Exception as e:
+    #         print("capture failed:", e)
+
 
 while True:
     print("waiting for motion...")
     sensor.wait_for_motion()
     time.sleep(1.5)  # let the cat settle into frame
     try:
-        #capture_and_send()
         print("motion detected")
+        trigger_covert_photo(phone)
     except Exception as e:
         print("capture failed:", e)
     time.sleep(COOLDOWN)
