@@ -25,17 +25,6 @@ sensor = MotionSensor(17)
 
 phone = PhoneController()
 
-# def capture_and_send():
-#     shot = requests.get(PHONE_SNAPSHOT, timeout=10)
-#     shot.raise_for_status()
-#     r = requests.post(
-#         SERVER,
-#         files={"file": ("shot.jpg", shot.content, "image/jpeg")},
-#         data={"key": API_KEY},
-#         timeout=60,
-#     )
-#     print(time.strftime("%H:%M:%S"), r.status_code, r.text)
-
 def capture_and_send(phone: PhoneController):
     trigger_covert_photo(phone)
     image_buffer, filename = phone.fetch_most_recent_photo()
