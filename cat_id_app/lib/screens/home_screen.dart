@@ -3,13 +3,15 @@ import 'package:image_picker/image_picker.dart';
 
 import '../camera_recovery.dart';
 import '../server_store.dart';
+import '../who_am_i.dart';
 import 'cough_screen.dart';
 import 'health_screen.dart';
 import 'identify_screen.dart';
 import 'label_screen.dart';
 import 'servers_screen.dart';
+import 'vet_screen.dart';
 
-enum AppTab { identify, label, health, cough }
+enum AppTab { identify, label, health, cough, vet }
 
 /// The order of the buttons along the bottom, left to right.
 /// To reorder them, change only this list. The first one is the tab shown at start-up.
@@ -17,10 +19,11 @@ const List<AppTab> kTabOrder = [
   AppTab.health,
   AppTab.identify,
   AppTab.cough,
+  AppTab.vet,
   AppTab.label,
 ];
 
-/// The tabs (Identify, Label, Health, Cough) for the selected server.
+/// The tabs (Health, Identify, Cough, Vet, Label) for the selected server.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key, required this.store});
 
@@ -85,6 +88,37 @@ class _HomeScreenState extends State<HomeScreen> {
       case AppTab.cough:
         return CoughScreen(
             key: ValueKey('cough-$tag'), store: widget.store, server: server);
+      case AppTab.vet:
+        return VetScreen(key: ValueKey('vet-$tag'), store: widget.store, server: server);
+    }
+  }
+
+  /// "Who am I" picker: who is using this phone, sent with every request.
+  Future<void> _pickWhoAmI() async {
+    final who = WhoAmI.instance;
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('Who are you?'),
+        children: [
+          for (final p in WhoAmI.people)
+            ListTile(
+              leading: Icon(p == who.name ? Icons.radio_button_checked : Icons.radio_button_off),
+              title: Text(p),
+              onTap: () => Navigator.of(context).pop(p),
+            ),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(24, 8, 24, 4),
+            child: Text(
+                'Saved on this phone. The server records it on photos, labels, coughs and vet visits.'),
+          ),
+        ],
+      ),
+    );
+    if (choice != null && choice != who.name) {
+      await who.set(choice);
+      // The Label tab reloads with the new name in its address.
+      setState(() => _gen[AppTab.label] = _gen[AppTab.label]! + 1);
     }
   }
 
@@ -114,6 +148,12 @@ class _HomeScreenState extends State<HomeScreen> {
           selectedIcon: Icon(Icons.healing),
           label: 'Cough',
         );
+      case AppTab.vet:
+        return const NavigationDestination(
+          icon: Icon(Icons.local_hospital_outlined),
+          selectedIcon: Icon(Icons.local_hospital),
+          label: 'Vet',
+        );
     }
   }
 
@@ -137,6 +177,14 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
         actions: [
+          ListenableBuilder(
+            listenable: WhoAmI.instance,
+            builder: (context, _) => TextButton.icon(
+              icon: const Icon(Icons.person_outline),
+              label: Text(WhoAmI.instance.name ?? 'Who am I?'),
+              onPressed: _pickWhoAmI,
+            ),
+          ),
           IconButton(
             tooltip: 'Servers',
             icon: const Icon(Icons.dns_outlined),

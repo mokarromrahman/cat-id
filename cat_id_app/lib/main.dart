@@ -3,10 +3,12 @@ import 'package:flutter/material.dart';
 import 'screens/home_screen.dart';
 import 'screens/welcome_screen.dart';
 import 'server_store.dart';
+import 'who_am_i.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final store = await ServerStore.load();
+  await WhoAmI.load();
   runApp(CatIdApp(store: store));
 }
 

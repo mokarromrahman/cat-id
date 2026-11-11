@@ -19,6 +19,9 @@ load_dotenv()
 
 SERVER = os.environ.get("SERVER", "http://192.168.1.116:8000/litterbox")
 API_KEY = os.environ.get("API_KEY", "")
+# Recorded as the photo's reporter on the server (a seeded app_user). Not called USER,
+# which the shell already sets to the login name.
+CAT_ID_USER = os.environ.get("CAT_ID_USER", "pi")
 COOLDOWN = 20  # seconds; stops one visit from firing many alerts
 
 sensor = MotionSensor(17)
@@ -33,7 +36,7 @@ def capture_and_send(phone: PhoneController):
             r = requests.post(
                 SERVER,
                 files={"file": (filename, image_buffer, "image/jpeg")},
-                data={"key": API_KEY},
+                data={"key": API_KEY, "user": CAT_ID_USER},
                 timeout=60,
             )
         except Exception as e:

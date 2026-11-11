@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../server_store.dart';
+import '../who_am_i.dart';
 
 /// Shows the server's own /label page: the same page you get in a browser, with
 /// labelling, crop, rotate, undo, history, delete and Retrain. Changes to that page
@@ -43,7 +44,10 @@ class _LabelScreenState extends State<LabelScreen> {
           },
         ),
       )
-      ..loadRequest(Uri.parse('http://${widget.server.address}/label'));
+      // ?user= tells the page who is labeling (see who_am_i.dart); it records it on each label.
+      ..loadRequest(widget.server.baseUri.replace(
+          path: '/label',
+          queryParameters: WhoAmI.current == null ? null : {'user': WhoAmI.current!}));
   }
 
   @override

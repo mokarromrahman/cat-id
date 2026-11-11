@@ -6,10 +6,34 @@ const cv=document.getElementById('view'),ctx=cv.getContext('2d');
 const url=r=>'/img/'+r.split('/').map(encodeURIComponent).join('/');
 const $=id=>document.getElementById(id);
 
+// Server only: ?user=<name> in the page URL (the app sets it) records who labeled.
+const USER=new URLSearchParams(location.search).get('user')||'';
+const withUser=p=>USER?p+(p.includes('?')?'&':'?')+'user='+encodeURIComponent(USER):p;
+
+// Server only: the event picker. evt is an event type code, 'none' (label only, no event)
+// or null (photo source unknown: the server picks its default). label.py sends no
+// event_types, so the picker stays hidden there and nothing extra is sent.
+let EVT_TYPES=[],SOURCES={},evt=null;
+function defaultEvt(name){
+  if(!EVT_TYPES.length)return null;
+  const s=SOURCES[name];
+  return s==='litterbox'?'litterbox':(s?'none':null);
+}
+function renderEvt(){
+  $('evt').querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.type===evt)));
+  $('evt').title=evt===null?'No choice made: the server uses Litterbox for photos from /litterbox, otherwise no event':'';
+}
+function setEvt(t){evt=t;renderEvt();}
+function cycleEvt(){
+  if(!EVT_TYPES.length)return;
+  const opts=EVT_TYPES.map(t=>t.type).concat('none');
+  setEvt(opts[(opts.indexOf(evt)+1)%opts.length]);
+}
+
 // ---------- feedback helpers ----------
 const COLORS={Litten:'#d62828',Shinx:'#f4c20d',neither:'#9a9a9a',both:'#7b4bb5'};
 const EXTRA=['#2a9d8f','#e76f51','#4d908e','#9b5de5'];   // for any other class folder
-const KIND_COLORS={skip:'#bdbdbd',done:'#6fcf97',undo:'#ff9f1c',keep:'#d4af37',error:'#ff4d4d',retrain:'#4ea1ff',delete:'#c0392b'};
+const KIND_COLORS={skip:'#bdbdbd',done:'#6fcf97',undo:'#ff9f1c',keep:'#d4af37',error:'#ff4d4d',retrain:'#4ea1ff',delete:'#c0392b',db:'#2a9d8f'};
 let BTN=[];   // BTN[i] is the button for LABELS[i]
 const colorOf=l=>COLORS[l]||EXTRA[Math.max(0,LABELS.indexOf(l))%EXTRA.length];
 const accent=e=>(e.label&&colorOf(e.label))||KIND_COLORS[e.kind]||'#888';
@@ -113,6 +137,7 @@ cv.addEventListener('pointerup',()=>{
 
 function loadCurrent(){
   current=queue.length?queue[0]:null;sel=null;rot=0;img=null;
+  if(EVT_TYPES.length)setEvt(defaultEvt(current));   // each photo starts at its own default
   if(!current){cv.style.display='none';hint();return;}
   cv.style.display='';
   const mine=current,im=new Image();
@@ -124,7 +149,7 @@ function loadCurrent(){
 
 async function refresh(){
   const s=await (await fetch('/api/state')).json();
-  queue=s.queue;
+  queue=s.queue;SOURCES=s.sources||{};
   $('left').textContent=s.remaining+' left';
   LABELS.forEach(l=>{
     const el=$('c_'+l),txt=l+' '+(s.counts[l]||0);
@@ -159,21 +184,24 @@ function lab(i){
     ring(BTN[i]);pflash(colorOf(LABELS[i]));                       // instant feedback, for clicks and keys alike
     if(sel){
       const blob=await cropBlob();
-      const r=await fetch('/api/crop?name='+encodeURIComponent(current)+'&label='+encodeURIComponent(LABELS[i])+'&keep='+(keep?1:0),{method:'POST',body:blob});
+      const et=evt!==null?'&event_type='+encodeURIComponent(evt):'';
+      const r=await fetch(withUser('/api/crop?name='+encodeURIComponent(current)+'&label='+encodeURIComponent(LABELS[i])+'&keep='+(keep?1:0)+et),{method:'POST',body:blob});
       if(r.ok&&keep)sel=null;       // a failure is logged by the server and appears in History
     }else{
-      await fetch('/api/label',{method:'POST',body:JSON.stringify({name:current,label:LABELS[i]})});
+      const body={name:current,label:LABELS[i]};
+      if(evt!==null)body.event_type=evt;
+      await fetch(withUser('/api/label'),{method:'POST',body:JSON.stringify(body)});
     }
   });
 }
 function done(){
-  if(current)run(()=>{ring('.done');pflash(KIND_COLORS.skip);return fetch('/api/archive',{method:'POST',body:JSON.stringify({name:current})});});
+  if(current)run(()=>{ring('.done');pflash(KIND_COLORS.skip);return fetch(withUser('/api/archive'),{method:'POST',body:JSON.stringify({name:current})});});
 }
 function undo(){
-  run(()=>{ring('.undo');pflash(KIND_COLORS.undo);return fetch('/api/undo',{method:'POST',body:'{}'});});
+  run(()=>{ring('.undo');pflash(KIND_COLORS.undo);return fetch(withUser('/api/undo'),{method:'POST',body:'{}'});});
 }
 function trash(){   // server only: delete the photo for good (Undo brings it back this session)
-  if(current)run(()=>{ring('#delbtn');pflash(KIND_COLORS.delete);return fetch('/api/delete',{method:'POST',body:JSON.stringify({name:current})});});
+  if(current)run(()=>{ring('#delbtn');pflash(KIND_COLORS.delete);return fetch(withUser('/api/delete'),{method:'POST',body:JSON.stringify({name:current})});});
 }
 function rotate(dir){
   if(!img)return;
@@ -200,6 +228,7 @@ document.addEventListener('keydown',e=>{
   else if(e.key==='Escape'){sel=null;draw();hint();}
   else if(e.key==='Delete'||e.key==='Backspace'){if(CFG.delete){e.preventDefault();trash();}}
   else if(e.key==='k')toggleKeep();
+  else if(e.key==='e')cycleEvt();
   else if(e.key==='h')toggleHist();
   else if(e.key==='ArrowRight'||e.key==='ArrowLeft'){e.preventDefault();rotate(e.key==='ArrowRight'?1:-1);}
 });
@@ -212,7 +241,7 @@ function renderKeep(){
 }
 function toggleKeep(){
   keep=!keep;renderKeep();hint();ring('#keepbtn');
-  fetch('/api/keep?on='+(keep?1:0),{method:'POST'}).then(pullLog).catch(()=>{});   // so the toggle shows in the history
+  fetch(withUser('/api/keep?on='+(keep?1:0)),{method:'POST'}).then(pullLog).catch(()=>{});   // so the toggle shows in the history
 }
 
 // If a button's artwork is missing from img_src/, show its label permanently instead.
@@ -230,6 +259,20 @@ async function init(){
   document.title=CFG.title||document.title;
   if(CFG.retrain)$('retrain').hidden=false;
   if(CFG.delete)$('delbtn').hidden=false;
+  if(CFG.event_types&&CFG.event_types.length){
+    EVT_TYPES=CFG.event_types;
+    const box=$('evt');
+    EVT_TYPES.concat([{type:'none',name:'None'}]).forEach(t=>{
+      const b=document.createElement('button');
+      b.className='sm';b.dataset.type=t.type;b.textContent=t.name;
+      b.setAttribute('aria-pressed','false');
+      b.title=t.type==='none'?'Label only, no event':'A Litten or Shinx label records a '+t.name+' event';
+      b.addEventListener('mousedown',e=>e.preventDefault());
+      b.addEventListener('click',()=>setEvt(t.type));
+      box.append(b);
+    });
+    box.hidden=false;
+  }
 
   LABELS.forEach((l,i)=>{
     if(i)cntEl.append(' · ');

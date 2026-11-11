@@ -15,6 +15,8 @@
  </div>
  <div id=stage><canvas id=view></canvas></div>
  <div id=name></div>
+ <!-- server only: which event a Litten/Shinx label records; buttons added by label.js -->
+ <div id=evt hidden><span class=evlbl>Event<kbd>E</kbd></span></div>
  <div id=bar>
   <!-- one button per label is added by label.js, then these three -->
   <button class=done data-img="done_skip.png" aria-label="Done/Skip" onmousedown="event.preventDefault()" onclick="done()"><span class=tip>Done, skip<small>Space</small></span></button>

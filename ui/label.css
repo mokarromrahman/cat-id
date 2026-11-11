@@ -40,6 +40,14 @@ button.lbl[data-label="both"]{background-image:url(/asset/both.png);background-c
 .keep{background-image:url(/asset/dont_keep.png);background-color:#555}
 .keep.on{background-image:url(/asset/keep_original.png);background-color:#d4af37}
 
+/* event picker (server only): which event a Litten/Shinx label records */
+#evt{display:flex;gap:8px;justify-content:center;align-items:center;flex-wrap:wrap;padding:2px 12px;font-size:13px}
+#evt[hidden]{display:none}
+#evt .evlbl{opacity:.7}
+#evt .evlbl kbd{font:inherit;font-size:11px;opacity:.6;margin-left:4px}
+#evt button.sm[aria-pressed=true]{background:#2f6f4f;box-shadow:0 0 0 2px #6fcf97 inset}
+#evt button.sm[data-type=none][aria-pressed=true]{background:#454545;box-shadow:0 0 0 2px #bdbdbd inset}
+
 /* --- feedback: ring flash on the button, colour flash around the photo, counter bump --- */
 @keyframes ring{
   0%{transform:scale(.94);box-shadow:0 0 0 0 rgba(255,255,255,.95),0 0 18px 4px rgba(255,255,255,.7)}

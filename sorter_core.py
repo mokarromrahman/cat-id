@@ -22,6 +22,11 @@ The API (same in both programs):
   POST /api/delete            {"name"}            server only: delete the file (undo restores it)
   POST /api/undo
   POST /api/keep?on=0|1       only records the toggle in the history
+
+Optional, server only: every POST may carry ?user=<name> (the app's "who am I"), and label /
+crop may carry an event type ("event_type" in the label body, &event_type= on crop; "none"
+means no event, left out means the default for the photo). They are passed to `on_action`,
+which app.py uses to update the database. label.py passes no `on_action`, so it ignores them.
 """
 import json
 import shutil
@@ -72,13 +77,16 @@ class Sorter:
     dest_dir(label) -> folder a photo labelled `label` is moved into
     archive_dir()   -> folder for done / skipped originals
     title, retrain  -> shown by the page
+    on_action(action, info) -> optional; called after each label / crop / archive / delete /
+                       undo has moved the files. A returned string is added to the History.
     """
 
     def __init__(self, *, labels, pending, resolve, dest_dir, archive_dir,
-                 title="Cat sorter", retrain=False, delete=False):
+                 title="Cat sorter", retrain=False, delete=False, on_action=None):
         self._labels, self._pending, self._resolve = labels, pending, resolve
         self._dest_dir, self._archive_dir = dest_dir, archive_dir
         self.title, self.retrain, self.delete_ok = title, retrain, delete
+        self._on_action = on_action
         self.lock = threading.RLock()
         # Undo stack: ("move", dest, orig, (title, detail)),
         #             ("crop", crop_file, archived_or_None, orig, (title, detail)) or
@@ -126,6 +134,18 @@ class Sorter:
         if label not in self._labels():
             raise ValueError("bad label")
 
+    def _notify(self, action, info, meta):
+        """Tell on_action what just happened. Never fails the action: the files have
+        already moved, so a problem here is only logged in the History."""
+        if self._on_action is None:
+            return
+        try:
+            msg = self._on_action(action, {**info, **(meta or {})})
+            if msg:
+                self.log("db", msg)
+        except Exception as e:
+            self.log("error", "Database not updated", f"{type(e).__name__}: {e}")
+
     def _move_to(self, rel, folder, kind, title, detail=None, label=None):
         src = self._resolve(rel)
         dest = unique_dest(folder, src.name)
@@ -133,23 +153,26 @@ class Sorter:
         detail = detail or src.name
         self.history.append(("move", dest, src, (title, detail)))
         self.log(kind, title, detail, label)
+        return src, dest
 
-    def move(self, rel, label):
+    def move(self, rel, label, meta=None):
         self._check(label)
-        self._move_to(rel, self._dest_dir(label), "move", f"Moved to {label}", label=label)
+        src, dest = self._move_to(rel, self._dest_dir(label), "move", f"Moved to {label}", label=label)
+        self._notify("label", {"name": src.name, "label": label, "file_path": str(dest)}, meta)
 
-    def archive(self, rel):
+    def archive(self, rel, meta=None):
         """Done/skip. If crops were taken from this photo (and not undone), call it
         "Crop done"; otherwise it is a plain "Skipped"."""
         src = self._resolve(rel)
         n = sum(1 for e in self.history if e[0] == "crop" and e[3] == src)
         if n:
             detail = f"{src.name} · {n} crop{'s' if n != 1 else ''} saved · original archived"
-            self._move_to(rel, self._archive_dir(), "done", "Crop done", detail)
+            src, dest = self._move_to(rel, self._archive_dir(), "done", "Crop done", detail)
         else:
-            self._move_to(rel, self._archive_dir(), "skip", "Skipped (archived)")
+            src, dest = self._move_to(rel, self._archive_dir(), "skip", "Skipped (archived)")
+        self._notify("archive", {"name": src.name, "file_path": str(dest)}, meta)
 
-    def crop(self, rel, label, keep, data):
+    def crop(self, rel, label, keep, data, meta=None):
         self._check(label)
         if not data.startswith(b"\xff\xd8"):
             raise ValueError("crop is not a JPEG")
@@ -169,8 +192,11 @@ class Sorter:
         detail = f"{src.name} → {crop.name} · original {'kept' if keep else 'archived'}"
         self.history.append(("crop", crop, archived, src, (title, detail)))
         self.log("crop", title, detail, label)
+        self._notify("crop", {"name": src.name, "label": label, "crop_name": crop.name,
+                              "crop_path": str(crop),
+                              "archived_path": str(archived) if archived else None}, meta)
 
-    def delete(self, rel):
+    def delete(self, rel, meta=None):
         """Really delete the file (the old /label page's delete button). The bytes
         are kept in memory for this session so Undo can bring it back."""
         if not self.delete_ok:
@@ -180,8 +206,9 @@ class Sorter:
         src.unlink()
         self.history.append(("delete", src, data, ("Deleted", src.name)))
         self.log("delete", "Deleted", src.name)
+        self._notify("delete", {"name": src.name}, meta)
 
-    def undo(self):
+    def undo(self, meta=None):
         if not self.history:
             self.log("undo", "Nothing to undo")
             return
@@ -191,7 +218,9 @@ class Sorter:
             orig.parent.mkdir(parents=True, exist_ok=True)
             orig.write_bytes(data)
             self.log("undo", f"Undid: {title}", detail)
+            self._notify("undo", {"kind": "delete", "name": orig.name, "orig_path": str(orig)}, meta)
             return
+        crop = None
         if entry[0] == "move":
             _, dest, orig, (title, detail) = entry
         else:
@@ -201,6 +230,10 @@ class Sorter:
             orig.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(dest), str(orig))
         self.log("undo", f"Undid: {title}", detail)
+        info = {"kind": entry[0], "name": orig.name, "orig_path": str(orig)}
+        if crop is not None:
+            info["crop_path"] = str(crop)
+        self._notify("undo", info, meta)
 
     # ---------- one entry point for every POST ----------
     def handle_post(self, route, query, raw):
@@ -208,24 +241,27 @@ class Sorter:
         query: urllib.parse.parse_qs(...) dict. Returns (http_status, json_dict).
         A failure is logged so it shows up in the History panel."""
         try:
+            meta = {"user": query.get("user", [None])[0]}
             with self.lock:
                 if route == "label":
                     body = json.loads(raw or b"{}")
-                    self.move(body["name"], body["label"])
+                    self.move(body["name"], body["label"],
+                              {**meta, "event_type": body.get("event_type")})
                 elif route == "archive":
-                    self.archive(json.loads(raw or b"{}")["name"])
+                    self.archive(json.loads(raw or b"{}")["name"], meta)
                 elif route == "delete":
                     if not self.delete_ok:
                         return 404, {"error": "not found"}
-                    self.delete(json.loads(raw or b"{}")["name"])
+                    self.delete(json.loads(raw or b"{}")["name"], meta)
                 elif route == "undo":
-                    self.undo()
+                    self.undo(meta)
                 elif route == "keep":
                     on = query.get("on", ["0"])[0] == "1"
                     self.log("keep", "Keep original: on" if on else "Keep original: off")
                 elif route == "crop":
                     self.crop(query["name"][0], query["label"][0],
-                              query.get("keep", ["0"])[0] == "1", raw)
+                              query.get("keep", ["0"])[0] == "1", raw,
+                              {**meta, "event_type": query.get("event_type", [None])[0]})
                 else:
                     return 404, {"error": "not found"}
             return 200, {}
@@ -234,7 +270,7 @@ class Sorter:
             return 400, {"error": str(e)}
 
 
-def inbox_sorter(data: Path, inbox: Path, classes, retrain=False, delete=False):
+def inbox_sorter(data: Path, inbox: Path, classes, retrain=False, delete=False, on_action=None):
     """The server's flavour: photos come from inbox/, a label means data/<label>/,
     'both' is set aside in inbox/_both (it is not a training class), and skipped
     photos go to inbox/_archived. `classes()` returns the class folder names."""
@@ -257,4 +293,5 @@ def inbox_sorter(data: Path, inbox: Path, classes, retrain=False, delete=False):
         return data / label if label in classes() else inbox / f"_{label}"
 
     return Sorter(labels=labels, pending=pending, resolve=resolve, dest_dir=dest_dir,
-                  archive_dir=lambda: inbox / ARCHIVE, title="Cat sorter (server)", retrain=retrain, delete=delete)
+                  archive_dir=lambda: inbox / ARCHIVE, title="Cat sorter (server)", retrain=retrain, delete=delete,
+                  on_action=on_action)

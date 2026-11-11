@@ -9,9 +9,43 @@ services:
       COUGH_DISCORD_WEBHOOK_URL: "${COUGH_DISCORD_WEBHOOK_URL}"
       API_KEY: "${API_KEY:-}"
       MIN_CONF: "0.75"
+      # Not used by app.py yet; ready for when the event tables are added.
+      # postgresql+psycopg:// makes SQLAlchemy use the psycopg 3 driver.
+      DATABASE_URL: "postgresql+psycopg://${POSTGRES_USER:-catid}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-catid}"
+    # Start db first, but don't wait for it to be healthy: cat-id must keep taking photos and
+    # posting to Discord even when Postgres is down. The server retries the DB itself at startup.
+    depends_on:
+      db:
+        condition: service_started
     volumes:
       - ./data:/app/data          # labeled photos: data/Litten, data/Shinx, data/neither
       - ./inbox:/app/inbox        # new captures awaiting labels
       - ./model.joblib:/app/model.joblib
       - ./embeddings_cache.npz:/app/embeddings_cache.npz
       - ./hf_cache:/app/hf_cache  # pretrained weights download once
+
+  db:
+    image: postgres:18
+    restart: unless-stopped
+    # Run a tiny init as PID 1. Without it, a process left over from `docker exec` or a
+    # timed-out healthcheck is adopted by Postgres, and if it exits with an error Postgres
+    # treats it as a crashed backend and restarts every connection (seen in testing).
+    init: true
+    environment:
+      POSTGRES_USER: "${POSTGRES_USER:-catid}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}"
+      POSTGRES_DB: "${POSTGRES_DB:-catid}"
+    volumes:
+      - pgdata:/var/lib/postgresql   # the database files; survive rebuilds and restarts
+    # Only reachable from the server itself. To connect from your Mac (e.g. a GUI client),
+    # change to "5432:5432" -- then anyone on the home network can reach it with the password.
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:

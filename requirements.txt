@@ -10,3 +10,6 @@ fastapi
 uvicorn[standard]
 python-multipart
 requests
+sqlalchemy
+alembic
+psycopg[binary]

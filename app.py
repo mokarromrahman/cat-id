@@ -1,9 +1,18 @@
 """Cat identification service.
 
-POST /identify   upload a photo -> JSON {cat, confidence}; saves it to inbox/, no Discord
-POST /litterbox  same as /identify, and also posts the result + photo to Discord
+POST /identify   upload a photo (form: file, key, optional user) -> JSON
+                 {cat, best_guess, confidence, saved_as}; saves it to inbox/ and records a
+                 `picture` row (source identify), no Discord
+POST /litterbox  same as /identify (source litterbox), and also posts the result + photo
+                 to Discord. The Pi sends user=pi.
+POST /cough      form: cat, key, optional info, optional user -> records a cough event and
+                 posts to the cough Discord channel; returns null if that webhook isn't set
+                 (the event is still recorded)
 GET  /label      page to label captured photos (grows the dataset); same page and
-                 /api/* as label.py, see sorter_core.py and ui/
+                 /api/* as label.py, see sorter_core.py and ui/. Optional ?user=<name>
+                 records who labeled. Labeling Litten or Shinx with an event type (default
+                 Litterbox for /litterbox photos) creates an event; see db.py.
+GET/POST/PATCH/DELETE /vet_visit...  vet visits for the app's Vet tab, see vet_api.py
 POST /api/retrain  re-run training on data/ and hot-reload the model
 GET  /health     is the model loaded, which classes it knows, how many training
                  photos each class has in data/ (the same ones train.py reads), and
@@ -12,6 +21,10 @@ GET  /health     is the model loaded, which classes it knows, how many training
                  {"model_loaded": true, "classes": ["Litten", "Shinx", "neither"],
                   "photos": {"Litten": 912, "Shinx": 703, "neither": 42},
                   "waiting_in_inbox": 17}
+
+`user` everywhere is a name from app_user (pi, Ashley, Mac); missing or unknown means the
+system user. Database writes never fail a request: if Postgres is down they go to
+inbox/_db_failed.jsonl (replay with replay_db_failed.py).
 """
 import io
 import json
@@ -21,15 +34,17 @@ import threading
 import time
 from pathlib import Path
 from urllib.parse import parse_qs
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 import joblib
 import requests
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
+import db
 import sorter_core
+import vet_api
 from embed import embed, open_image
 
 DATA = Path("data")
@@ -44,12 +59,16 @@ EDMONTON_TZ = ZoneInfo("America/Edmonton")
 
 INBOX.mkdir(exist_ok=True)
 app = FastAPI(title="cat-id")
+app.include_router(vet_api.router)
 bundle = None
+model_version = None  # model.joblib's modified time (UTC), stored on each picture row
 
 
 def load_model():
-    global bundle
+    global bundle, model_version
     bundle = joblib.load(MODEL_PATH) if MODEL_PATH.exists() else None
+    model_version = (datetime.fromtimestamp(MODEL_PATH.stat().st_mtime, timezone.utc)
+                     .isoformat(timespec="seconds") if bundle is not None else None)
 
 
 load_model()
@@ -76,16 +95,22 @@ def post_discord(jpeg: bytes, text: str):
         print("discord post failed:", e)
 
 
-def check_request(key: str):
+def check_key(key: str):
     if API_KEY and key != API_KEY:
         raise HTTPException(401, "bad key")
+
+
+def check_request(key: str):
+    check_key(key)
     if bundle is None:
         raise HTTPException(503, "model not trained yet")
 
 
-def identify_photo(raw: bytes):
+def identify_photo(raw: bytes, tasks: BackgroundTasks, *, received: datetime, source: str, user: str):
     """Classify one photo and keep it in inbox/ for later labeling (the prediction
-    is encoded in the file name). Returns (json_result, image, discord_message)."""
+    is encoded in the file name), and record it as a `picture` row once the response has
+    been sent. `received` is when the request arrived (UTC).
+    Returns (json_result, image, discord_message)."""
     try:
         img = open_image(io.BytesIO(raw))
     except Exception:
@@ -96,6 +121,12 @@ def identify_photo(raw: bytes):
 
     name = f"{int(time.time())}_{label}_{conf:.2f}.jpg"
     img.save(INBOX / name, quality=92)
+    # After the response, so the Pi and the app never wait on the database.
+    tasks.add_task(db.safe_write, "picture", {
+        "event_timestamp": received, "best_guess": cat, "confidence": conf,
+        "predicted_label": label, "filename": name, "file_path": str(INBOX / name),
+        "source": source, "user": user or None, "model_version": model_version,
+    })
 
     if label == "neither":
         msg = "Motion at the litterbox, but no cat detected."
@@ -108,30 +139,42 @@ def identify_photo(raw: bytes):
 
 
 @app.post("/identify")
-async def identify(file: UploadFile = File(...), key: str = Form("")):
+async def identify(tasks: BackgroundTasks, file: UploadFile = File(...), key: str = Form(""),
+                   user: str = Form("")):
     """Identify the cat and save the photo. Returns JSON only, no Discord post."""
+    received = db.utcnow()
     check_request(key)
-    result, _, _ = identify_photo(await file.read())
+    result, _, _ = identify_photo(await file.read(), tasks, received=received, source="identify", user=user)
     return result
 
 
 @app.post("/litterbox")
-async def litterbox(file: UploadFile = File(...), key: str = Form("")):
+async def litterbox(tasks: BackgroundTasks, file: UploadFile = File(...), key: str = Form(""),
+                    user: str = Form("")):
     """Same as /identify (same JSON, same saved photo), and also posts the result
     and the photo to Discord. This is the one the Pi should call."""
+    received = db.utcnow()
     check_request(key)
-    result, img, msg = identify_photo(await file.read())
+    result, img, msg = identify_photo(await file.read(), tasks, received=received, source="litterbox", user=user)
     buf = io.BytesIO()
     img.save(buf, "JPEG", quality=85)
     post_discord(buf.getvalue(), msg)
     return result
 
 @app.post("/cough")
-async def cough(cat: str = Form(""), key: str = Form(""), info: str = Form("No additional info.")):
+async def cough(tasks: BackgroundTasks, cat: str = Form(""), key: str = Form(""),
+                info: str = Form(""), user: str = Form("")):
+    """Record a cough event (no event if `cat` isn't Litten or Shinx) and post it to the
+    cough Discord channel. Returns null when that webhook isn't set."""
+    received = db.utcnow()
+    check_key(key)
+    tasks.add_task(db.safe_write, "cough", {"cat": cat, "user": user or None,
+                                            "notes": info.strip() or None,
+                                            "event_timestamp": received})
     if not COUGH_DISCORD_WEBHOOK:
         return
-    check_request(key)
-    timestamp = datetime.now(EDMONTON_TZ).strftime("%Y-%m-%d %H:%M:%S %Z")
+    info = info.strip() or "No additional info."
+    timestamp = received.astimezone(EDMONTON_TZ).strftime("%Y-%m-%d %H:%M:%S %Z")
     msg = f"**{cat}** just had cough attack at {timestamp}. Additional info: {info}"
     try:
         requests.post(
@@ -150,7 +193,15 @@ def class_names():
 
 
 # ---------- /label: the same page and API as label.py (logic in sorter_core.py) ----------
-sorter = sorter_core.inbox_sorter(DATA, INBOX, class_names, retrain=True, delete=True)
+def record_label_action(action, info):
+    """sorter_core calls this after each label / crop / archive / delete / undo; the db.py
+    writer of the same name updates picture and event rows. The returned text shows in the
+    page's History."""
+    return db.safe_write(action, info, on_fail="Database unavailable: saved for replay later")
+
+
+sorter = sorter_core.inbox_sorter(DATA, INBOX, class_names, retrain=True, delete=True,
+                                  on_action=record_label_action)
 NO_CACHE = {"Cache-Control": "no-cache"}
 
 
@@ -186,12 +237,16 @@ def img(name: str):
 
 @app.get("/api/config")
 def api_config():
-    return sorter.config()
+    # event_types turns on the label page's event picker (label.py doesn't send it)
+    return {**sorter.config(), "event_types": db.event_types()}
 
 
 @app.get("/api/state")
 def api_state():
-    return sorter.state()
+    # sources: {photo name: "litterbox" | "identify"} for the queue, so the page can preset
+    # the event picker. A photo with no row is left out and gets the server's default.
+    s = sorter.state()
+    return {**s, "sources": db.picture_sources(s["queue"])}
 
 
 @app.get("/api/log")
