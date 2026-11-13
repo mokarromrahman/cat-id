@@ -7,6 +7,125 @@ import 'package:http/http.dart' as http;
 import 'server_store.dart';
 import 'who_am_i.dart';
 
+String _two(int n) => n.toString().padLeft(2, '0');
+
+/// "2026-11-13": a day as the server's date parameters expect it.
+String isoDay(DateTime d) => '${d.year}-${_two(d.month)}-${_two(d.day)}';
+
+/// One row of the server's event_type table: `type` is the code, `name` the display label.
+class EventType {
+  EventType.fromJson(Map<String, dynamic> j)
+      : type = j['type'] as String,
+        name = j['name'] as String;
+
+  final String type;
+  final String name;
+}
+
+/// The photo an event came from (litterbox visits, crops).
+class EventPicture {
+  EventPicture.fromJson(Map<String, dynamic> j)
+      : id = j['id'] as int,
+        source = j['source'] as String?,
+        bestGuess = j['best_guess'] as String?,
+        confidence = (j['confidence'] as num?)?.toDouble(),
+        labeledBy = j['labeled_by'] as String?,
+        hasImage = j['has_image'] as bool? ?? false;
+
+  final int id;
+  final String? source;
+
+  /// The model's guess; null for a crop (the model only saw the whole photo).
+  final String? bestGuess;
+  final double? confidence;
+  final String? labeledBy;
+
+  /// False when the photo was deleted on the label page.
+  final bool hasImage;
+}
+
+/// One event from GET /events.
+class CatEvent {
+  CatEvent.fromJson(Map<String, dynamic> j)
+      : id = j['id'] as int,
+        type = j['type'] as String,
+        typeName = j['type_name'] as String,
+        cat = j['cat'] as String,
+        when = DateTime.parse(j['event_timestamp'] as String).toLocal(),
+        reporter = j['reporter'] as String?,
+        notes = j['notes'] as String?,
+        picture = j['picture'] == null
+            ? null
+            : EventPicture.fromJson(j['picture'] as Map<String, dynamic>);
+
+  final int id;
+  final String type;
+  final String typeName;
+  final String cat;
+
+  /// When it happened, in the phone's time zone (Edmonton).
+  final DateTime when;
+  final String? reporter;
+  final String? notes;
+  final EventPicture? picture;
+}
+
+/// Event counts for the chart: one series per event type and cat, one count per bucket.
+class EventChart {
+  EventChart.fromJson(Map<String, dynamic> j)
+      : kind = j['kind'] as String,
+        bucket = j['bucket'] as String,
+        buckets = [for (final b in j['buckets'] as List) b as String],
+        series = {
+          for (final t in (j['series'] as Map<String, dynamic>).entries)
+            t.key: {
+              for (final c in (t.value as Map<String, dynamic>).entries)
+                c.key: [for (final n in c.value as List) (n as num).toInt()]
+            }
+        };
+
+  /// "bar" or "line".
+  final String kind;
+
+  /// "hour", "day" or "week".
+  final String bucket;
+
+  /// Each bucket's start in Edmonton time: "2026-11-13" (day, week) or
+  /// "2026-11-13T08:00-07:00" (hour).
+  final List<String> buckets;
+
+  /// type -> cat -> counts, one per bucket.
+  final Map<String, Map<String, List<int>>> series;
+}
+
+/// One page of GET /events. [totals] and [chart] come only with the first page.
+class EventsPage {
+  EventsPage.fromJson(Map<String, dynamic> j)
+      : events = [
+          for (final e in (j['events'] as List? ?? const []))
+            CatEvent.fromJson(e as Map<String, dynamic>)
+        ],
+        next = j['next'] as String?,
+        total = (j['totals'] as Map?)?['all'] as int?,
+        byCat = _counts((j['totals'] as Map?)?['by_cat']),
+        byType = {
+          for (final t in (((j['totals'] as Map?)?['by_type'] as Map?) ?? const {}).entries)
+            t.key as String: _counts(t.value)
+        },
+        chart = j['chart'] == null ? null : EventChart.fromJson(j['chart'] as Map<String, dynamic>);
+
+  static Map<String, int> _counts(dynamic m) => {
+        for (final e in ((m as Map?) ?? const {}).entries) e.key as String: (e.value as num).toInt()
+      };
+
+  final List<CatEvent> events;
+  final String? next;
+  final int? total;
+  final Map<String, int> byCat;
+  final Map<String, Map<String, int>> byType;
+  final EventChart? chart;
+}
+
 /// One row of the server's vet_visit table, as GET /vet_visit returns it.
 class VetVisit {
   VetVisit.fromJson(Map<String, dynamic> j)
@@ -204,6 +323,16 @@ class CatApi {
 
   /// Like [_json], but the vet routes' errors are shown as the server words them.
   Map<String, dynamic> _vetJson(http.Response r) {
+    final body = _detailBody(r, 'vet visits');
+    if (body is! Map<String, dynamic>) {
+      throw ApiException('The server sent something unexpected.');
+    }
+    return body;
+  }
+
+  /// The decoded JSON body of a vet or events route, or an [ApiException] worded from the
+  /// server's `detail`. [feature] names what an older server lacks when the route is missing.
+  dynamic _detailBody(http.Response r, String feature) {
     dynamic body;
     try {
       body = jsonDecode(utf8.decode(r.bodyBytes));
@@ -227,15 +356,61 @@ class CatApi {
         detail = field == null ? first['msg'] : '$field: ${first['msg']}';
       }
       if (r.statusCode == 404 && detail == 'Not Found') {
-        detail = "This server doesn't have vet visits yet. Update the server.";
+        detail = "This server doesn't have $feature yet. Update the server.";
       }
       throw ApiException(detail?.toString() ?? 'Server error (${r.statusCode})');
     }
+    return body;
+  }
+
+  // ---------- events (server: events_api.py) ----------
+
+  /// GET /event_types: the Event filter's choices and the chart pages, in order.
+  Future<List<EventType>> eventTypes() async {
+    final r = await _guard(() => http
+        .get(_uri('/event_types'), headers: _jsonHeaders)
+        .timeout(const Duration(seconds: 15)));
+    final body = _detailBody(r, 'events');
+    if (body is! List) throw ApiException('The server sent something unexpected.');
+    return [for (final t in body) EventType.fromJson(t as Map<String, dynamic>)];
+  }
+
+  /// GET /events. [cat] and [type] null mean every cat / every type; [from] and [to] are
+  /// days (the server reads them as Edmonton days, both included). [before] is the
+  /// previous page's [EventsPage.next], for Load more.
+  Future<EventsPage> events({
+    String? cat,
+    String? type,
+    required DateTime from,
+    required DateTime to,
+    String? before,
+    int limit = 50,
+  }) async {
+    final query = {
+      'cat': ?cat,
+      'type': ?type,
+      'from': isoDay(from),
+      'to': isoDay(to),
+      'limit': '$limit',
+      'before': ?before,
+    };
+    final r = await _guard(() => http
+        .get(_uri('/events', query), headers: _jsonHeaders)
+        .timeout(const Duration(seconds: 20)));
+    final body = _detailBody(r, 'events');
     if (body is! Map<String, dynamic>) {
       throw ApiException('The server sent something unexpected.');
     }
-    return body;
+    return EventsPage.fromJson(body);
   }
+
+  /// Where an event's photo is served (GET /picture/{id}/image); load it with [imageHeaders].
+  Uri pictureUri(int pictureId) => _uri('/picture/$pictureId/image');
+
+  Map<String, String> get imageHeaders => {if (apiKey.isNotEmpty) 'X-API-Key': apiKey};
+
+  /// Button art from the server's img_src/ (the label page's pictures).
+  Uri assetUri(String file) => _uri('/asset/$file');
 
   /// POST /api/retrain. Trains again on the server's data/ folder; takes a few minutes.
   Future<void> retrain() async {

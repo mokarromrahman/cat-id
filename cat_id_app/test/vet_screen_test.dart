@@ -84,8 +84,8 @@ void main() {
   // A tap that misses its widget fails the test instead of only printing a warning.
   WidgetController.hitTestWarningShouldBeFatal = true;
 
-  test('Vet comes right after Cough in the tab order', () {
-    expect(kTabOrder, [AppTab.health, AppTab.identify, AppTab.cough, AppTab.vet, AppTab.label]);
+  test('tab order: Events replaced Cough, Vet comes after it', () {
+    expect(kTabOrder, [AppTab.health, AppTab.identify, AppTab.events, AppTab.vet, AppTab.label]);
   });
 
   testWidgets('"Both" saves one visit per cat in a single request', (tester) async {

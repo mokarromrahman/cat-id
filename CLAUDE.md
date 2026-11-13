@@ -22,6 +22,7 @@ Ubuntu server on the home network (192.168.1.116:8000). Nothing is exposed to th
 | `app.py` | FastAPI server (in Docker). Endpoints below. |
 | `db.py` | SQLAlchemy 2 models, connection, `safe_write`/`safe_read`, and the writers (picture, label, crop, archive, delete, undo, cough) that `app.py` and `replay_db_failed.py` share. |
 | `vet_api.py` | `/vet_visit` routes (APIRouter included by `app.py`). |
+| `events_api.py` | `/events`, `/event_types`, `/picture/{id}/image` for the app's Events tab (APIRouter included by `app.py`). |
 | `alembic.ini`, `migrations/` | Alembic. `0001_initial_schema.py`: tables, CHECKs, audit trigger, `active_vet_visit` view, seed rows. |
 | `start.py` | Container entry point: waits up to 30 s for Postgres, runs `alembic upgrade head`, then starts uvicorn either way. |
 | `replay_db_failed.py` | Replays `inbox/_db_failed.jsonl` (writes that failed while Postgres was down). |
@@ -50,6 +51,10 @@ Not in git: `data/`, `inbox/`, `model.joblib`, `embeddings_cache.npz`, `hf_cache
   (the event is still recorded). Checks the key but not the model.
 - `GET|POST /vet_visit`, `PATCH|DELETE /vet_visit/{id}`, `POST /vet_visit/{id}/restore`: see
   `vet_api.py`. Key in the `X-API-Key` header. Need the DB: 503 if it's down.
+- `GET /events` (`cat`, `type`, `from`, `to` as Edmonton days, `limit`, `before` cursor),
+  `GET /event_types`, `GET /picture/{id}/image` (serves only files under `data/` or `inbox/`):
+  see `events_api.py`. View only. Key in `X-API-Key`; 503 if the DB is down. Totals and chart
+  data cover the whole filtered range and come with the first page only.
 - `GET /health`: `{model_loaded, classes, photos: {class: count}, waiting_in_inbox}`.
 - `GET /label` (optional `?user=`) plus `/ui/*`, `/asset/*`, `/img/*`, `GET /api/config|state|log`,
   `POST /api/{label,crop,archive,undo,keep,delete}`, `POST /api/retrain`. `/api/config` adds
@@ -60,7 +65,8 @@ Not in git: `data/`, `inbox/`, `model.joblib`, `embeddings_cache.npz`, `hf_cache
   `inbox/_both`; Done/Skip goes to `inbox/_archived`; Delete really deletes (undoable in-session).
   Use `shutil.move`, not `Path.rename` (separate Docker bind mounts). The label buttons come from
   the folders in `data/`.
-- `/identify`, `/litterbox`, `/cough` and `/vet_visit` check `API_KEY`. `/label` and its
+- `/identify`, `/litterbox`, `/cough`, `/vet_visit`, `/events`, `/event_types` and
+  `/picture/{id}/image` check `API_KEY`. `/label` and its
   `/api/*` routes don't, on purpose (owner's choice): anyone on the home network can label.
 
 ## Database (Postgres 18, SQLAlchemy 2 sync + Alembic, psycopg 3)
@@ -101,14 +107,21 @@ Not in git: `data/`, `inbox/`, `model.joblib`, `embeddings_cache.npz`, `hf_cache
 - Changing the schema: edit `db.py`, `alembic revision --autogenerate -m "..."` (in the
   container), review it, `alembic check` must say no changes. Recreate `active_vet_visit` if
   `vet_visit` gains columns (`SELECT *` is frozen at creation).
-- Not built yet: `GET /events` for the app; the Databricks export (push batches of new rows
+- `event.picture_id` stays nullable for every type (no trigger requiring a photo); the app
+  shows a placeholder when there's none.
+- Time zones: Edmonton is UTC-6 all year from Nov 2026 (tzdata 2026c; last clock change Mar 8,
+  2026). The server uses the pip `tzdata` package (`PYTHONTZPATH=` in the Dockerfile) so an old
+  base-image copy can't shift days by an hour. Day boundaries come from
+  `events_api.local_midnight()`.
+- Not built yet: the Databricks export (push batches of new rows
   to cloud storage for Auto Loader; select by `created_on`/`modified_on`, since events can be
   created long after `event_timestamp`).
 
 ## Android app (`cat_id_app/`)
 
 Flutter, Android only, sideloaded (not on the Play Store). Tabs, in `kTabOrder` in
-`lib/screens/home_screen.dart`: Health, Identify, Cough, Vet, Label.
+`lib/screens/home_screen.dart`: Health, Identify, Events, Vet, Label. Cough has no tab: the
+Events tab's Add cough button opens `CoughScreen` in a sheet.
 
 - Up to 5 servers saved (`server_store.dart`, SharedPreferences); each server's API key in
   `flutter_secure_storage` (Android Keystore). Plain http on the home network.
@@ -116,15 +129,25 @@ Flutter, Android only, sideloaded (not on the Play Store). Tabs, in `kTabOrder` 
   Sent as `user` on identify, litterbox, cough and vet requests, and as `?user=` on the Label
   web view. Not set means nothing is sent (server records `system`).
 - Label tab is a WebView of the server's `/label`. Health and Label reload each time you
-  switch to them; Identify, Cough and Vet keep their state.
+  switch to them; Identify, Events and Vet keep their state (Events: pull down to refresh).
+- Events tab (`screens/events_screen.dart`), view only. Filters, one value each: cat (Both /
+  Litten / Shinx), event (All / each type from `/event_types`), dates dropdown (Today, Last 7
+  days (default), Last 30 days, This month, Custom range picker). Summary line, then a chart per
+  event type (`fl_chart`; swipe between them when Event is All; swiping changes only the chart)
+  with its own per-cat totals: Today = bars per hour, up to 31 days = side-by-side bars per day
+  (Litten red, Shinx yellow), longer = a line per cat (per week past 183 days); tap for that
+  bucket's counts. Event cards newest first, 50 at a time with Load more; photo thumbnails open
+  full screen (model guess, labeler, sender); no photo = the cat's art dimmed with "No photo".
+  Mockups: https://claude.ai/artifact/GExMht8zuX7qAbbSsNaUeQ.
 - Vet tab (`screens/vet_screen.dart`): form (Litten / Shinx / Both / No cat; date defaults to
   today, time optional, clinic pre-filled "Millwoods East Veterinary Clinic"; reasons, weight,
   cost, follow-up and notes per cat) and the visit list with edit, delete, "Show deleted" and
   restore. No offline caching: if the server can't be reached it shows the error.
 - `api.dart`: `health()`, `identify(path, sendToDiscord:)` (`/identify` or `/litterbox`),
   `cough(cat, info)`, `vetVisits`, `addVetVisits`, `editVetVisit`, `deleteVetVisit`,
-  `restoreVetVisit`, `retrain()`.
-- Tests: `flutter test` (`test/vet_screen_test.dart` drives the Vet tab against a fake server).
+  `restoreVetVisit`, `eventTypes`, `events`, `pictureUri`, `retrain()`.
+- Tests: `flutter test` (`test/vet_screen_test.dart` and `test/events_screen_test.dart` drive
+  the Vet and Events tabs against a fake server).
 - Build: `cd cat_id_app && flutter run --release` or `flutter build apk --release`.
   Release build has `isMinifyEnabled = false` / `isShrinkResources = false` in
   `android/app/build.gradle.kts` (R8 broke shared_preferences). minSdk 24.
@@ -140,6 +163,41 @@ server). `.env` with test values (`POSTGRES_PASSWORD`, `API_KEY=test`, empty Dis
 `data/neither` must exist for all label buttons to work.
 
 ## Other open ideas
+
+- **Server test suite (planned separately, not part of the Events tab work).** Today the
+  server has no saved tests: each phase was checked by hand (curl, psql) and those checks
+  can't be re-run. Plan:
+  - `tests/` with pytest, run inside the container: `docker compose exec cat-id pytest`.
+    `requirements-dev.txt` holds pytest (installed for tests only; the production image stays
+    the same).
+  - `tests/conftest.py`: creates a separate, empty `catid_test` database on the `db` service,
+    runs the Alembic migrations on it, points `db.py` at it, gives each test a clean state, and
+    drives the app with FastAPI's `TestClient` (no running server needed). Never touches the
+    real `catid` database, `data/` or `inbox/` (temporary folders instead).
+  - `test_photos.py`: `/litterbox` and `/identify` create `picture` rows with the right
+    source, reporter (`pi`, Ashley, `system` for missing/unknown) and `event_timestamp`; the
+    JSON response is unchanged; bad key gives 401.
+  - `test_labels.py`: Litten/Shinx with the default type makes a litterbox event only for
+    `/litterbox` photos; `event_type` cough/none; neither/both make none; crops get their own
+    rows; one event per cat per original photo (duplicates skipped); undo removes the event;
+    archive/delete set the status; the old `POST /label` form still works.
+  - `test_coughs.py`: `/cough` records an event (notes NULL when empty); unknown cat gives no
+    event; no webhook still records it and returns null.
+  - `test_vet.py`: add one / "both" (all or nothing), validation errors, edit, soft delete,
+    `include_deleted`, restore, `active_vet_visit` view.
+  - `test_db_down.py`: with the DB unreachable, requests still succeed, rows land in the failed
+    file, and `replay_db_failed.py` restores them.
+  - `label.py` / `sorter_core.py` without a database (must also pass on the Mac's Python 3.9).
+  - Later: the Events tab's date logic (midnight in Edmonton, daylight-saving days) goes here
+    too. Running tests automatically on every commit (e.g. GitHub Actions) is a separate step.
+
+- **Photo on a cough (deferred by the owner, 2026-11-13).** An optional photo in the Add cough
+  sheet (camera or gallery via `image_picker`), shown on the cough event like litterbox photos.
+  Proposed, not agreed: `/cough` takes an optional `file`; saved under `inbox/_cough/` (on the
+  mounted disk, not listed by `/label`); a `picture` row with a new `source` value `cough`
+  (migration widening `picture_source_allowed`) linked by `event.picture_id`; no model guess;
+  photo posted to the cough Discord channel. Owner still to decide: storage folder or the label
+  queue, the new source value, model guess yes/no, Discord yes/no.
 
 - Alerts: no litterbox visit from a cat in 24 h+, unusual frequency; weekly Discord summary
   (would read `picture`, so they don't depend on how fast photos are labeled).

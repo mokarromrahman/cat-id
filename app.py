@@ -13,6 +13,9 @@ GET  /label      page to label captured photos (grows the dataset); same page an
                  records who labeled. Labeling Litten or Shinx with an event type (default
                  Litterbox for /litterbox photos) creates an event; see db.py.
 GET/POST/PATCH/DELETE /vet_visit...  vet visits for the app's Vet tab, see vet_api.py
+GET  /events     events (filter by cat, type, date range), totals and chart data for the
+                 app's Events tab; GET /event_types; GET /picture/{id}/image serves an
+                 event's photo. See events_api.py.
 POST /api/retrain  re-run training on data/ and hot-reload the model
 GET  /health     is the model loaded, which classes it knows, how many training
                  photos each class has in data/ (the same ones train.py reads), and
@@ -43,6 +46,7 @@ from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
 import db
+import events_api
 import sorter_core
 import vet_api
 from embed import embed, open_image
@@ -60,6 +64,7 @@ EDMONTON_TZ = ZoneInfo("America/Edmonton")
 INBOX.mkdir(exist_ok=True)
 app = FastAPI(title="cat-id")
 app.include_router(vet_api.router)
+app.include_router(events_api.router)
 bundle = None
 model_version = None  # model.joblib's modified time (UTC), stored on each picture row
 

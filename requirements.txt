@@ -13,3 +13,4 @@ requests
 sqlalchemy
 alembic
 psycopg[binary]
+tzdata

@@ -4,26 +4,27 @@ import 'package:image_picker/image_picker.dart';
 import '../camera_recovery.dart';
 import '../server_store.dart';
 import '../who_am_i.dart';
-import 'cough_screen.dart';
+import 'events_screen.dart';
 import 'health_screen.dart';
 import 'identify_screen.dart';
 import 'label_screen.dart';
 import 'servers_screen.dart';
 import 'vet_screen.dart';
 
-enum AppTab { identify, label, health, cough, vet }
+/// Cough has no tab of its own: the Events tab's "Add cough" button opens the cough form.
+enum AppTab { identify, label, health, events, vet }
 
 /// The order of the buttons along the bottom, left to right.
 /// To reorder them, change only this list. The first one is the tab shown at start-up.
 const List<AppTab> kTabOrder = [
   AppTab.health,
   AppTab.identify,
-  AppTab.cough,
+  AppTab.events,
   AppTab.vet,
   AppTab.label,
 ];
 
-/// The tabs (Health, Identify, Cough, Vet, Label) for the selected server.
+/// The tabs (Health, Identify, Events, Vet, Label) for the selected server.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key, required this.store});
 
@@ -53,7 +54,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   /// Bumped each time you arrive on Label or Health, so they load fresh from the server.
-  /// (Identify and Cough keep what you typed or picked.)
+  /// (Identify, Events and Vet keep what you typed, picked or filtered.)
   final Map<AppTab, int> _gen = {AppTab.label: 0, AppTab.health: 0};
 
   void _goTo(AppTab t) => setState(() {
@@ -85,9 +86,8 @@ class _HomeScreenState extends State<HomeScreen> {
           server: server,
           onOpenLabel: () => _goTo(AppTab.label),
         );
-      case AppTab.cough:
-        return CoughScreen(
-            key: ValueKey('cough-$tag'), store: widget.store, server: server);
+      case AppTab.events:
+        return EventsScreen(key: ValueKey('events-$tag'), store: widget.store, server: server);
       case AppTab.vet:
         return VetScreen(key: ValueKey('vet-$tag'), store: widget.store, server: server);
     }
@@ -142,11 +142,11 @@ class _HomeScreenState extends State<HomeScreen> {
           selectedIcon: Icon(Icons.favorite),
           label: 'Health',
         );
-      case AppTab.cough:
+      case AppTab.events:
         return const NavigationDestination(
-          icon: Icon(Icons.healing_outlined),
-          selectedIcon: Icon(Icons.healing),
-          label: 'Cough',
+          icon: Icon(Icons.event_note_outlined),
+          selectedIcon: Icon(Icons.event_note),
+          label: 'Events',
         );
       case AppTab.vet:
         return const NavigationDestination(
