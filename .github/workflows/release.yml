@@ -1,0 +1,92 @@
+# Runs on its own whenever you push a version tag:
+#     git tag v0.2.0 && git push origin v0.2.0
+# 1. pytest  2. build the server image and push it to ghcr.io  3. create the GitHub Release.
+# The APK (apk.yml) and the server deploy (deploy.yml) are separate, optional buttons
+# you press afterwards from the Actions tab.
+name: Release (tests + server image)
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write   # create the Release
+  packages: write   # push to ghcr.io
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    # A throwaway Postgres 18, the same version as the server. The planned tests/conftest.py
+    # creates its own catid_test database on it.
+    services:
+      db:
+        image: postgres:18
+        env:
+          POSTGRES_USER: catid
+          POSTGRES_PASSWORD: catid
+          POSTGRES_DB: catid
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U catid -d catid"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://catid:catid@localhost:5432/catid
+      API_KEY: test
+      PYTHONTZPATH: ''   # same as the Dockerfile: use the pip tzdata package
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'   # same as the Dockerfile
+          cache: pip
+      - run: pip install -r requirements.txt pytest
+      - name: pytest
+        # Exit code 5 means "no tests found". There's no tests/ folder yet, so allow that
+        # until the test suite exists; any real failure still stops the release.
+        run: |
+          set +e
+          pytest -v
+          code=$?
+          if [ "$code" -eq 5 ]; then echo "::warning::No tests found yet"; exit 0; fi
+          exit $code
+
+  image:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          # v0.2.0 -> :0.2.0, :0.2 and :latest
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Reuse the big torch layer between releases when requirements.txt hasn't changed.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  release:
+    needs: image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          body: |
+            Server image: `ghcr.io/${{ github.repository }}:${{ github.ref_name }}` (without the `v`)
+            Android APK: attached below once the "Build APK" workflow has been run for this tag.

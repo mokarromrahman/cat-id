@@ -1,5 +1,8 @@
 services:
   cat-id:
+    # The server pulls a released version (deploy.yml sets CAT_ID_TAG, e.g. 0.2.0).
+    # `docker compose up --build` still builds locally (on the Mac) as before.
+    image: ghcr.io/mokarromrahman/cat-id:${CAT_ID_TAG:-latest}
     build: .
     restart: unless-stopped
     ports:

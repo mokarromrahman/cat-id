@@ -1,0 +1,75 @@
+# Optional. Run it by hand from Actions -> "Deploy server" -> Run workflow, and type the tag
+# (e.g. v0.2.0) once "Release" has finished for it. Or:  gh workflow run deploy.yml -f tag=v0.2.0
+# Runs on the self-hosted runner on the Ubuntu server (label "home"): pulls that version's
+# image from ghcr.io and restarts the cat-id container. The db container and its data,
+# .env, data/, inbox/, model.joblib and hf_cache/ on the server are left as they are.
+# start.py runs the Alembic migrations when the new container starts.
+# To roll back, run it again with the older tag.
+name: Deploy server
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Version tag to deploy, e.g. v0.2.0'
+        required: true
+
+permissions:
+  contents: read
+  packages: read    # pull the image from ghcr.io
+
+concurrency:
+  group: deploy-server
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, home]
+    env:
+      # Repo variable (Settings -> Secrets and variables -> Actions -> Variables): the folder on
+      # the server that has .env, data/, inbox/, model.joblib, etc.
+      DEPLOY_DIR: ${{ vars.DEPLOY_DIR }}
+    steps:
+      - name: Check inputs
+        run: |
+          [[ "${{ inputs.tag }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Tag must look like v1.2.3"; exit 1; }
+          [ -n "$DEPLOY_DIR" ] && [ -f "$DEPLOY_DIR/.env" ] || { echo "::error::Set the DEPLOY_DIR repo variable to the folder with .env"; exit 1; }
+
+      # The tag's docker-compose.yml, so compose changes ship with the version.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+          sparse-checkout: docker-compose.yml
+          sparse-checkout-cone-mode: false
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull and restart cat-id
+        run: |
+          VERSION="${{ inputs.tag }}"
+          export CAT_ID_TAG="${VERSION#v}"
+          # --project-directory keeps the existing project name, .env and bind-mount paths,
+          # so this replaces the running containers instead of starting a second set.
+          compose="docker compose -f $GITHUB_WORKSPACE/docker-compose.yml --project-directory $DEPLOY_DIR"
+          $compose pull cat-id
+          $compose up -d --no-build
+          $compose ps
+
+      - name: Wait for /health
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8000/health; then echo; echo "Healthy"; exit 0; fi
+            sleep 5
+          done
+          echo "::error::/health didn't answer within 150 s. Check: docker compose logs cat-id"
+          exit 1
+
+      - name: Clean up
+        if: always()
+        run: |
+          docker logout ghcr.io || true
+          docker image prune -f   # removes untagged old images only

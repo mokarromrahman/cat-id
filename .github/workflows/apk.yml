@@ -1,0 +1,77 @@
+# Optional. Run it by hand from Actions -> "Build APK" -> Run workflow, and type the tag
+# (e.g. v0.2.0). Or from a terminal:  gh workflow run apk.yml -f tag=v0.2.0
+# Runs the Flutter tests, builds a release APK and attaches it to that tag's GitHub Release,
+# so a phone can download it straight from the Releases page.
+name: Build APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Version tag to build, e.g. v0.2.0'
+        required: true
+
+permissions:
+  contents: write   # attach the APK to the Release
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cat_id_app
+    steps:
+      - name: Check the tag looks like a version
+        working-directory: .
+        run: |
+          [[ "${{ inputs.tag }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Tag must look like v1.2.3"; exit 1; }
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      # The release build is signed with the debug key (build.gradle.kts). Using the Mac's
+      # own ~/.android/debug.keystore means these APKs install as updates over the app that's
+      # already on the phones, keeping saved servers, API keys and "Who am I".
+      - name: Restore the signing key
+        working-directory: .
+        env:
+          DEBUG_KEYSTORE_B64: ${{ secrets.DEBUG_KEYSTORE_B64 }}
+        run: |
+          if [ -z "$DEBUG_KEYSTORE_B64" ]; then
+            echo "::error::Add the DEBUG_KEYSTORE_B64 secret first (see the setup notes)"; exit 1
+          fi
+          mkdir -p ~/.android
+          echo "$DEBUG_KEYSTORE_B64" | base64 -d > ~/.android/debug.keystore
+
+      - run: flutter pub get
+
+      - name: flutter test
+        run: flutter test
+
+      - name: Build the APK
+        # versionName comes from the tag (v0.2.0 -> 0.2.0). versionCode must go up every
+        # build or Android refuses the update; run_number + 100 keeps it above the 1 that
+        # pubspec.yaml gives local builds.
+        run: |
+          VERSION="${{ inputs.tag }}"
+          flutter build apk --release \
+            --build-name="${VERSION#v}" \
+            --build-number=$(( ${{ github.run_number }} + 100 ))
+          mv build/app/outputs/flutter-apk/app-release.apk "build/cat-id-${VERSION}.apk"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          files: cat_id_app/build/cat-id-${{ inputs.tag }}.apk
+          fail_on_unmatched_files: true
