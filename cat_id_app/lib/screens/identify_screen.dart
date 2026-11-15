@@ -5,6 +5,7 @@ import 'package:image_picker/image_picker.dart';
 
 import '../api.dart';
 import '../camera_recovery.dart';
+import '../pets/pet_events.dart';
 import '../server_store.dart';
 
 /// Pick or take a photo, then ask the server who it is ("Identify" calls /identify, JSON
@@ -90,6 +91,8 @@ class _IdentifyScreenState extends State<IdentifyScreen> {
       setState(() {
         _result = r;
       });
+      // The walking cat it recognised hops ("uncertain" and "neither" do nothing).
+      PetEvents.instance.celebrate(r.cat);
     } on ApiException catch (e) {
       if (!mounted) return;
       setState(() => _error = e.message);

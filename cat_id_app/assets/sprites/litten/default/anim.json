@@ -1,0 +1,66 @@
+{
+  "Walk": {
+    "frameWidth": 32,
+    "frameHeight": 40,
+    "frames": 5,
+    "rows": 8,
+    "durations": [
+      6,
+      4,
+      4,
+      4,
+      6
+    ]
+  },
+  "Idle": {
+    "frameWidth": 24,
+    "frameHeight": 24,
+    "frames": 4,
+    "rows": 8,
+    "durations": [
+      40,
+      12,
+      20,
+      12
+    ]
+  },
+  "Sleep": {
+    "frameWidth": 24,
+    "frameHeight": 16,
+    "frames": 2,
+    "rows": 1,
+    "durations": [
+      30,
+      35
+    ]
+  },
+  "Hop": {
+    "frameWidth": 24,
+    "frameHeight": 80,
+    "frames": 10,
+    "rows": 8,
+    "durations": [
+      2,
+      1,
+      2,
+      3,
+      4,
+      4,
+      3,
+      2,
+      1,
+      2
+    ]
+  },
+  "Nod": {
+    "frameWidth": 24,
+    "frameHeight": 24,
+    "frames": 3,
+    "rows": 8,
+    "durations": [
+      6,
+      8,
+      6
+    ]
+  }
+}

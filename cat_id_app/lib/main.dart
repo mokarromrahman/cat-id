@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'pets/pet_settings.dart';
 import 'screens/home_screen.dart';
 import 'screens/welcome_screen.dart';
 import 'server_store.dart';
@@ -9,6 +10,7 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final store = await ServerStore.load();
   await WhoAmI.load();
+  await PetSettings.load();
   runApp(CatIdApp(store: store));
 }
 

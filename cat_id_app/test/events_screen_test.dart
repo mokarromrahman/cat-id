@@ -1,7 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:cat_id_app/api.dart';
+import 'package:cat_id_app/pets/pet_events.dart';
 import 'package:cat_id_app/screens/events_screen.dart';
+import 'package:cat_id_app/screens/report_event_screen.dart';
 import 'package:cat_id_app/server_store.dart';
 import 'package:cat_id_app/who_am_i.dart';
 import 'package:flutter/material.dart';
@@ -283,6 +286,61 @@ void main() {
       expect(server.reports.containsKey('/cough'), isFalse);
       expect(find.text('Sent to Discord for Litten'), findsOneWidget);
     }, () => server.client);
+  });
+
+  group('the walking cats react once the Add event form closes', () {
+    late List<PetCue> cues;
+    late StreamSubscription<PetCue> sub;
+    setUp(() {
+      cues = [];
+      sub = PetEvents.instance.cues.listen(cues.add);
+    });
+    tearDown(() => sub.cancel());
+
+    Future<void> report(WidgetTester tester, String kind, String cat) async {
+      await _tap(tester, find.text('Add event'));
+      await _tap(tester, find.text(kind).last); // the menu item, not the filter
+      await _tap(tester, find.text(cat).last);
+      await _tap(tester, find.text('Send to Discord'));
+    }
+
+    Future<void> closeForm(WidgetTester tester) async {
+      Navigator.of(tester.element(find.byType(ReportEventScreen))).pop();
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('a litterbox visit: that cat hops, after the form closes', (tester) async {
+      final server = FakeServer();
+      await http.runWithClient(() async {
+        await _pump(tester, await _store());
+        await report(tester, 'Litterbox', 'Litten');
+        await tester.pumpAndSettle();
+        expect(cues, isEmpty, reason: 'the form still covers the cats');
+        await closeForm(tester);
+        expect(cues, [(cat: 'Litten', reaction: PetReaction.hop, delay: PetEvents.afterFormCloses)]);
+      }, () => server.client);
+    });
+
+    testWidgets('a cough: that cat nods', (tester) async {
+      final server = FakeServer();
+      await http.runWithClient(() async {
+        await _pump(tester, await _store());
+        await report(tester, 'Cough', 'Shinx');
+        await closeForm(tester);
+        expect(cues, [(cat: 'Shinx', reaction: PetReaction.nod, delay: PetEvents.afterFormCloses)]);
+      }, () => server.client);
+    });
+
+    testWidgets('closing the form without sending: no reaction', (tester) async {
+      final server = FakeServer();
+      await http.runWithClient(() async {
+        await _pump(tester, await _store());
+        await _tap(tester, find.text('Add event'));
+        await _tap(tester, find.text('Litterbox').last);
+        await closeForm(tester);
+        expect(cues, isEmpty);
+      }, () => server.client);
+    });
   });
 
   testWidgets('Add event > Cough: an earlier date and time picked under When is sent',

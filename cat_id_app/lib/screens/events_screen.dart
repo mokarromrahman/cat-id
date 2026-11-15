@@ -4,6 +4,7 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 
 import '../api.dart';
+import '../pets/pet_events.dart';
 import '../server_store.dart';
 import 'report_event_screen.dart';
 
@@ -175,6 +176,10 @@ class _EventsScreenState extends State<EventsScreen> {
   }
 
   Future<void> _addEvent(ReportKind kind) async {
+    // The form covers the walking cats, so they react once it closes: a hop for each cat
+    // with a litterbox visit, a nod for a cough.
+    final reaction = kind == ReportKind.litterbox ? PetReaction.hop : PetReaction.nod;
+    final sent = <PetReport>[];
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -186,10 +191,16 @@ class _EventsScreenState extends State<EventsScreen> {
         padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
         child: FractionallySizedBox(
           heightFactor: 0.85,
-          child: ReportEventScreen(store: widget.store, server: widget.server, kind: kind),
+          child: ReportEventScreen(
+            store: widget.store,
+            server: widget.server,
+            kind: kind,
+            onSent: (cat) => sent.add((cat: cat, reaction: reaction)),
+          ),
         ),
       ),
     );
+    PetEvents.instance.afterReports(sent);
     if (mounted) _load(); // show the event that was just sent
   }
 
