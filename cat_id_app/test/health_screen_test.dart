@@ -7,14 +7,33 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-Map<String, dynamic> health({Object? version = _absent, Object? commit = _absent}) => {
+Map<String, dynamic> health(
+        {Object? version = _absent, Object? commit = _absent, Object? litterboxes = _absent}) =>
+    {
       'model_loaded': true,
       'classes': ['Litten', 'Shinx', 'neither'],
       'photos': {'Litten': 912, 'Shinx': 703, 'neither': 42},
       'waiting_in_inbox': 3,
       if (version != _absent) 'version': version,
       if (commit != _absent) 'commit': commit,
+      if (litterboxes != _absent) 'litterboxes': litterboxes,
     };
+
+Future<void> _pumpHealth(WidgetTester tester, Map<String, dynamic> body) async {
+  final client = MockClient((req) async => http.Response(jsonEncode(body), 200,
+      headers: {'content-type': 'application/json'}));
+  await http.runWithClient(() async {
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: HealthScreen(
+          server: Server(id: '1', name: 'Home', address: '192.168.1.116:8000'),
+          onOpenLabel: () {},
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+  }, () => client);
+}
 
 const _absent = Object();
 
@@ -53,5 +72,53 @@ void main() {
       expect(find.text('Commit 433c253', skipOffstage: false), findsOneWidget);
       expect(find.text('Model loaded'), findsOneWidget); // the rest of the tab still shows
     }, () => client);
+  });
+
+  group('litterbox cleaning', () {
+    final now = DateTime(2026, 11, 15, 12);
+    test('overdue after 24 hours or when never cleaned', () {
+      expect(cleanOverdue(null, now), isTrue);
+      expect(cleanOverdue(now.subtract(const Duration(hours: 23)), now), isFalse);
+      expect(cleanOverdue(now.subtract(const Duration(hours: 25)), now), isTrue);
+    });
+    test('ago text', () {
+      expect(agoText(now.subtract(const Duration(seconds: 20)), now), 'just now');
+      expect(agoText(now.subtract(const Duration(minutes: 25)), now), '25 min ago');
+      expect(agoText(now.subtract(const Duration(hours: 5)), now), '5 h ago');
+      expect(agoText(now.subtract(const Duration(hours: 30)), now), '1 day ago');
+      expect(agoText(now.subtract(const Duration(days: 3)), now), '3 days ago');
+    });
+  });
+
+  testWidgets('the Health tab shows each litterbox, highlighting an overdue one', (tester) async {
+    final now = DateTime.now().toUtc();
+    await _pumpHealth(tester, health(litterboxes: [
+      {
+        'location': 'basement', 'name': 'Basement',
+        'last_cleaned': now.subtract(const Duration(hours: 2)).toIso8601String(),
+        'bag_last_changed': now.subtract(const Duration(days: 3)).toIso8601String(),
+      },
+      {'location': 'master_bathroom', 'name': 'Master Bathroom',
+       'last_cleaned': now.subtract(const Duration(hours: 30)).toIso8601String(),
+       'bag_last_changed': null},
+    ]));
+    expect(find.text('Litterboxes', skipOffstage: false), findsOneWidget);
+    expect(find.textContaining('(2 h ago)', skipOffstage: false), findsOneWidget);
+    expect(find.textContaining('Bag was last changed', skipOffstage: false), findsOneWidget);
+    expect(find.text('Bag change not recorded yet', skipOffstage: false), findsOneWidget);
+    expect(find.textContaining('(1 day ago)', skipOffstage: false), findsOneWidget);
+    expect(find.byIcon(Icons.warning_amber, skipOffstage: false), findsOneWidget); // bathroom only
+  });
+
+  testWidgets('no Litterboxes card for an older server', (tester) async {
+    await _pumpHealth(tester, health());
+    expect(find.text('Litterboxes', skipOffstage: false), findsNothing);
+    expect(find.text('Model loaded'), findsOneWidget);
+  });
+
+  testWidgets("a note when the server's database is down", (tester) async {
+    await _pumpHealth(tester, health(litterboxes: null));
+    expect(find.text('Litterboxes', skipOffstage: false), findsOneWidget);
+    expect(find.textContaining("database isn't reachable", skipOffstage: false), findsOneWidget);
   });
 }

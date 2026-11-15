@@ -61,7 +61,7 @@ String _rangeText(DateTime from, DateTime to) {
 
 /// The Events tab: litterbox visits and coughs, filtered by cat, event type and dates,
 /// with totals, a chart per event type (swipe between them) and the list. View only.
-/// "Add event" opens a menu (Litterbox / Cough), then that form (this tab replaced the
+/// "Add event" opens a menu (Litterbox / Cough / Clean Litterbox), then that form (this tab replaced the
 /// Cough tab; the Identify tab's "Identify + send to Discord" moved here as Litterbox).
 class EventsScreen extends StatefulWidget {
   const EventsScreen({super.key, required this.store, required this.server});
@@ -220,6 +220,11 @@ class _EventsScreenState extends State<EventsScreen> {
             leadingIcon: const Icon(Icons.sick_outlined),
             onPressed: () => _addEvent(ReportKind.cough),
             child: const Text('Cough'),
+          ),
+          MenuItemButton(
+            leadingIcon: const Icon(Icons.cleaning_services_outlined),
+            onPressed: () => _addEvent(ReportKind.clean),
+            child: const Text('Clean Litterbox'),
           ),
         ],
         builder: (context, menu, _) => FloatingActionButton.extended(
@@ -718,7 +723,8 @@ class _EventCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('${e.typeName} · ${e.cat}', style: theme.textTheme.titleSmall),
+                  Text([e.typeName, e.cat, ?e.location].join(' · '),
+                      style: theme.textTheme.titleSmall),
                   const SizedBox(height: 2),
                   Text('${_niceDate(e.when)} · ${TimeOfDay.fromDateTime(e.when).format(context)}',
                       style: theme.textTheme.bodySmall),

@@ -4,12 +4,21 @@ POST /identify   upload a photo (form: file, key, optional user) -> JSON
                  {cat, best_guess, confidence, saved_as}; saves it to inbox/ and records a
                  `picture` row (source identify), no Discord
 POST /litterbox  same as /identify (source litterbox), and also posts the result + photo
-                 to Discord. The Pi sends user=pi.
-                 With form `cat` (and optional info, file, event_time): a visit reported
-                 by hand from the app's Events tab. Works like /cough: the litterbox event
-                 is recorded now (at event_time), a photo is optional (saved like /identify's, source litterbox, linked
-                 to the event), posts to the litterbox Discord channel; returns null if that
-                 webhook isn't set (the event is still recorded)
+                 to Discord. The Pi sends user=pi. Optional form `location` (a location
+                 name): which box the photo is of; missing means PI_LOCATION (default
+                 basement). Labeling the photo copies it onto the litterbox event.
+                 With form `cat` (and optional info, file, event_time, location): a visit
+                 reported by hand from the app's Events tab. Works like /cough: the litterbox
+                 event is recorded now (at event_time), a photo is optional (saved like
+                 /identify's, source litterbox, linked to the event), `location` missing
+                 means not known, posts to the litterbox Discord channel; returns null if
+                 that webhook isn't set (the event is still recorded). An unknown location
+                 gives 400 either way
+POST /litterbox_clean  form: location, key, optional bag_changed (true/false, default
+                 false), info, user, event_time -> records a litterbox_clean_event row
+                 (event_time as for /cough; server_timestamp = arrival time). No Discord.
+                 Returns {"status": 200, "location", "message"}. Unknown location or a bad
+                 event_time: 400, nothing recorded
 POST /cough      form: cat, key, optional info, user, file, event_time -> records a
                  cough event and posts to the cough Discord channel; returns null if that
                  webhook isn't set (the event is still recorded). A photo in `file` is
@@ -31,11 +40,16 @@ GET  /health     is the model loaded, which classes it knows, how many training
                  photos each class has in data/ (the same ones train.py reads), how
                  many captures are waiting to be sorted in inbox/ (the "N left"
                  on /label), and which server build this is (the release tag and full
-                 commit hash; "dev" and null for a local build):
+                 commit hash; "dev" and null for a local build), and per litterbox when
+                 it was last cleaned and its bag last changed (UTC; null if never;
+                 `litterboxes` is null if the database is down):
                  {"model_loaded": true, "classes": ["Litten", "Shinx", "neither"],
                   "photos": {"Litten": 912, "Shinx": 703, "neither": 42},
                   "waiting_in_inbox": 17, "version": "v0.2.0",
-                  "commit": "433c253..."}
+                  "commit": "433c253...",
+                  "litterboxes": [{"location": "basement", "name": "Basement",
+                                   "last_cleaned": "2026-11-15T15:02:00+00:00",
+                                   "bag_last_changed": null}, ...]}
 
 `user` everywhere is a name from app_user (pi, Ashley, Mac); missing or unknown means the
 system user. Database writes never fail a request: if Postgres is down they go to
@@ -76,6 +90,8 @@ EDMONTON_TZ = ZoneInfo("America/Edmonton")
 # commit). "dev" / None for a local build.
 SERVER_VERSION = os.environ.get("CAT_ID_VERSION") or "dev"
 SERVER_COMMIT = os.environ.get("CAT_ID_COMMIT") or None
+# The box the Pi's camera watches: /litterbox photos sent without a `location` are of it.
+PI_LOCATION = os.environ.get("PI_LOCATION", "basement")
 
 INBOX.mkdir(exist_ok=True)
 app = FastAPI(title="cat-id")
@@ -127,10 +143,12 @@ def check_request(key: str):
         raise HTTPException(503, "model not trained yet")
 
 
-def identify_photo(raw: bytes, tasks: BackgroundTasks, *, received: datetime, source: str, user: str):
+def identify_photo(raw: bytes, tasks: BackgroundTasks, *, received: datetime, source: str, user: str,
+                   location: str | None = None):
     """Classify one photo and keep it in inbox/ for later labeling (the prediction
     is encoded in the file name), and record it as a `picture` row once the response has
-    been sent. `received` is when the request arrived (UTC).
+    been sent. `received` is when the request arrived (UTC); `location` the litterbox it
+    is of, if any.
     Returns (json_result, image, discord_message)."""
     try:
         img = open_image(io.BytesIO(raw))
@@ -150,6 +168,7 @@ def identify_photo(raw: bytes, tasks: BackgroundTasks, *, received: datetime, so
         "event_timestamp": received, "best_guess": cat, "confidence": conf,
         "predicted_label": label, "filename": name, "file_path": str(INBOX / name),
         "source": source, "user": user or None, "model_version": model_version,
+        "location": location,
     })
 
     if label == "neither":
@@ -173,29 +192,45 @@ async def identify(tasks: BackgroundTasks, file: UploadFile = File(...), key: st
     return result
 
 
+def check_location(name: str) -> str | None:
+    """A location name from a form, stripped; None if empty. 400 if it isn't a known one."""
+    name = name.strip()
+    if not name:
+        return None
+    known = [l["name"] for l in db.locations()]
+    if name not in known:
+        raise HTTPException(400, f"unknown location {name!r} (known: {', '.join(known)})")
+    return name
+
+
 @app.post("/litterbox")
 async def litterbox(tasks: BackgroundTasks, file: UploadFile | None = File(None),
                     key: str = Form(""), user: str = Form(""), cat: str = Form(""),
-                    info: str = Form(""), event_time: str = Form("")):
+                    info: str = Form(""), event_time: str = Form(""),
+                    location: str = Form("")):
     """Same as /identify (same JSON, same saved photo), and also posts the result
-    and the photo to Discord. This is the one the Pi should call.
+    and the photo to Discord. This is the one the Pi should call. `location` is the box
+    the photo is of (missing: PI_LOCATION).
     With `cat` (the app's Add litterbox sheet): a litterbox visit reported by hand, like
-    /cough: the event is recorded now, `file`, `info` and `event_time` are optional, see
-    report_event()."""
+    /cough: the event is recorded now, `file`, `info`, `event_time` and `location` are
+    optional, see report_event()."""
     received = db.utcnow()
     if cat:
         check_key(key)
+        where = check_location(location)
         return report_event(
             tasks, "litterbox_report", raw=await file.read() if file is not None else b"",
             cat=cat, info=info, user=user, received=received, event_time=event_time,
-            source="litterbox",
+            source="litterbox", location=where,
             webhook=DISCORD_WEBHOOK, what="litterbox report",
             text=lambda ts, note: f"**{cat}** used the litterbox at {ts} (reported from the app). "
                                   f"Additional info: {note}")
     check_request(key)
     if file is None:
         raise HTTPException(400, "file is required (or send cat to report a visit by hand)")
-    result, img, msg = identify_photo(await file.read(), tasks, received=received, source="litterbox", user=user)
+    where = check_location(location) or PI_LOCATION
+    result, img, msg = identify_photo(await file.read(), tasks, received=received,
+                                      source="litterbox", user=user, location=where)
     buf = io.BytesIO()
     img.save(buf, "JPEG", quality=85)
     post_discord(buf.getvalue(), msg)
@@ -241,7 +276,7 @@ def parse_event_time(value: str, received: datetime) -> datetime:
 
 def report_event(tasks: BackgroundTasks, kind: str, *, raw: bytes, cat: str, info: str,
                  user: str, received: datetime, event_time: str, source: str, webhook: str,
-                 what: str, text):
+                 what: str, text, location: str | None = None):
     """An event reported from the app with the cat picked by hand (/cough, /litterbox with
     `cat`). The db writer `kind` records it after the response (no event if `cat` isn't
     Litten or Shinx). An optional photo (`raw`) is handled like /identify's (model guess if
@@ -249,16 +284,19 @@ def report_event(tasks: BackgroundTasks, kind: str, *, raw: bytes, cat: str, inf
     to the event, attached to the Discord post and returned as "photo". A file that isn't
     an image gives 400 and nothing is recorded. Returns null when `webhook` isn't set.
     `event_time` (see parse_event_time) becomes the event's event_timestamp; the photo's
-    picture row keeps the arrival time. `text(timestamp, note)` is the Discord message."""
+    picture row keeps the arrival time. `location` (a checked location name or None) goes
+    on the event and its photo. `text(timestamp, note)` is the Discord message."""
     happened = parse_event_time(event_time, received)  # before anything is saved
     photo = None
     if raw:
-        photo, img, _ = identify_photo(raw, tasks, received=received, source=source, user=user)
+        photo, img, _ = identify_photo(raw, tasks, received=received, source=source, user=user,
+                                       location=location)
     # Added after the picture write, so the event can find its picture row.
     tasks.add_task(db.safe_write, kind, {"cat": cat, "user": user or None,
                                          "notes": info.strip() or None,
                                          "event_timestamp": happened,
-                                         "photo": photo["saved_as"] if photo else None})
+                                         "photo": photo["saved_as"] if photo else None,
+                                         "location": location})
     if not webhook:
         return None
     timestamp = happened.astimezone(EDMONTON_TZ).strftime("%Y-%m-%d %H:%M:%S %Z")
@@ -280,6 +318,29 @@ def report_event(tasks: BackgroundTasks, kind: str, *, raw: bytes, cat: str, inf
     if photo:
         result["photo"] = photo
     return result
+
+
+@app.post("/litterbox_clean")
+def litterbox_clean(tasks: BackgroundTasks, location: str = Form(""), key: str = Form(""),
+                    bag_changed: str = Form("false"), info: str = Form(""),
+                    user: str = Form(""), event_time: str = Form("")):
+    """A litterbox was cleaned (the app's Add event > Clean Litterbox). Recorded after the
+    response like the other writes; no Discord post."""
+    received = db.utcnow()
+    check_key(key)
+    where = check_location(location)
+    if where is None:
+        raise HTTPException(400, "location is required")
+    flag = bag_changed.strip().lower()
+    if flag not in ("true", "false", "1", "0", "yes", "no", "on", "off", ""):
+        raise HTTPException(400, "bag_changed must be true or false")
+    happened = parse_event_time(event_time, received)
+    tasks.add_task(db.safe_write, "litterbox_clean", {
+        "location": where, "user": user or None, "notes": info.strip() or None,
+        "bag_changed": flag in ("true", "1", "yes", "on"),
+        "event_timestamp": happened, "server_timestamp": received,
+    })
+    return {"status": 200, "location": where, "message": "Litterbox clean recorded."}
 
 
 def class_names():
@@ -418,4 +479,5 @@ def health():
         "waiting_in_inbox": sorter.remaining(),
         "version": SERVER_VERSION,
         "commit": SERVER_COMMIT,
+        "litterboxes": db.litterbox_status(),
     }

@@ -21,6 +21,7 @@ GET /events                   events, newest first, plus totals and chart data. 
     per day as bars, longer per day as lines, and past 183 days per week (7-day buckets
     starting at `from`). Every type and cat in the filter gets a series, zeros included.
     An event: {"id", "type", "type_name", "cat", "event_timestamp" (UTC), "reporter", "notes",
+               "location": null | {"name", "label_name"} (litterbox visits),
                "picture": null | {"id", "source", "status", "best_guess", "confidence",
                                   "labeled_by", "has_image"}}
 GET /picture/{id}/image       the photo file, wherever it is now (inbox/ or data/<cat>/);
@@ -164,12 +165,13 @@ def list_events(
 
             reporter, labeler = aliased(db.AppUser), aliased(db.AppUser)
             q = (select(db.Event, db.EventType.type, db.EventType.name, db.Cat.name,
-                        reporter.name, db.Picture, labeler.name)
+                        reporter.name, db.Picture, labeler.name, db.Location)
                  .join(db.EventType, db.EventType.id == db.Event.event_type_id)
                  .join(db.Cat, db.Cat.id == db.Event.cat_id)
                  .join(reporter, reporter.id == db.Event.reporter_id)
                  .outerjoin(db.Picture, db.Picture.id == db.Event.picture_id)
                  .outerjoin(labeler, labeler.id == db.Picture.labeled_by)
+                 .outerjoin(db.Location, db.Location.id == db.Event.location_id)
                  .where(*where))
             if cursor:
                 q = q.where(tuple_(db.Event.event_timestamp, db.Event.id) < tuple_(*cursor))
@@ -177,11 +179,12 @@ def list_events(
             rows = session.execute(q).all()
 
             events = []
-            for ev, tcode, tname, cname, rep, pic, lab in rows[:limit]:
+            for ev, tcode, tname, cname, rep, pic, lab, loc in rows[:limit]:
                 events.append({
                     "id": ev.id, "type": tcode, "type_name": tname, "cat": cname,
                     "event_timestamp": ev.event_timestamp.astimezone(timezone.utc).isoformat(),
                     "reporter": rep, "notes": ev.notes,
+                    "location": None if loc is None else {"name": loc.name, "label_name": loc.label_name},
                     "picture": None if pic is None else {
                         "id": pic.id, "source": pic.source, "status": pic.status,
                         "best_guess": pic.best_guess,

@@ -16,8 +16,24 @@ import '../server_store.dart';
   return (title, short == null ? 'No commit recorded' : 'Commit $short');
 }
 
+/// A litterbox counts as overdue for a clean after this long (or if it was never cleaned).
+const kCleanOverdueAfter = Duration(hours: 24);
+
+bool cleanOverdue(DateTime? lastCleaned, DateTime now) =>
+    lastCleaned == null || now.difference(lastCleaned) > kCleanOverdueAfter;
+
+/// "just now", "25 min ago", "5 h ago", "1 day ago", "3 days ago".
+String agoText(DateTime when, DateTime now) {
+  final d = now.difference(when);
+  if (d.inMinutes < 1) return 'just now';
+  if (d.inHours < 1) return '${d.inMinutes} min ago';
+  if (d.inDays < 1) return '${d.inHours} h ago';
+  return d.inDays == 1 ? '1 day ago' : '${d.inDays} days ago';
+}
+
 /// GET /health: model status, training photos per class, captures waiting in the
-/// inbox, and which server build this is. Also the Retrain button (POST /api/retrain).
+/// inbox, when each litterbox was last cleaned and its bag last changed, and which server
+/// build this is. Also the Retrain button (POST /api/retrain).
 class HealthScreen extends StatefulWidget {
   const HealthScreen({super.key, required this.server, required this.onOpenLabel});
 
@@ -103,6 +119,74 @@ class _HealthScreenState extends State<HealthScreen> {
     _load();
   }
 
+  /// "Today, 9:12 AM", "Yesterday, 11:05 PM" or "Nov 12, 2026, 8:00 AM".
+  String _dayTime(DateTime when) {
+    final loc = MaterialLocalizations.of(context);
+    final now = DateTime.now();
+    final days = DateTime(now.year, now.month, now.day)
+        .difference(DateTime(when.year, when.month, when.day))
+        .inDays;
+    final day = switch (days) {
+      0 => 'Today',
+      1 => 'Yesterday',
+      _ => loc.formatMediumDate(when),
+    };
+    return '$day, ${loc.formatTimeOfDay(TimeOfDay.fromDateTime(when))}';
+  }
+
+  /// One section per litterbox: when it was last cleaned (highlighted when overdue, see
+  /// [kCleanOverdueAfter]) and when its bag was last changed.
+  Widget _litterboxCard(bool dbDown, List<LitterboxStatus> boxes, ThemeData theme) {
+    final now = DateTime.now();
+    final scheme = theme.colorScheme;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Litterboxes', style: theme.textTheme.titleMedium),
+            const SizedBox(height: 8),
+            if (dbDown) const Text("The server's database isn't reachable right now."),
+            for (final (i, b) in boxes.indexed) ...[
+              if (i > 0) const Divider(),
+              Builder(builder: (context) {
+                final overdue = cleanOverdue(b.lastCleaned, now);
+                final cleaned = b.lastCleaned;
+                final bag = b.bagLastChanged;
+                final warn = overdue ? scheme.error : null;
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                            child: Text(b.name,
+                                style: theme.textTheme.titleSmall?.copyWith(color: warn))),
+                        if (overdue)
+                          Icon(Icons.warning_amber, size: 20, color: scheme.error),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      cleaned == null
+                          ? 'Never cleaned (none recorded yet)'
+                          : 'Last cleaned ${_dayTime(cleaned)} (${agoText(cleaned, now)})',
+                      style: TextStyle(color: warn),
+                    ),
+                    Text(bag == null
+                        ? 'Bag change not recorded yet'
+                        : 'Bag was last changed ${_dayTime(bag)}'),
+                  ],
+                );
+              }),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final data = _data;
@@ -145,6 +229,12 @@ class _HealthScreenState extends State<HealthScreen> {
     final waiting = (data['waiting_in_inbox'] as num?)?.toInt() ?? 0;
     final total = photos.values.fold<int>(0, (a, b) => a + b);
     final (versionTitle, versionDetail) = serverVersionText(data);
+    // Older servers don't send `litterboxes` (no card); null means its database is down.
+    final hasLitterboxes = data.containsKey('litterboxes');
+    final litterboxes = [
+      for (final l in (data['litterboxes'] as List?) ?? const [])
+        LitterboxStatus.fromJson(l as Map<String, dynamic>)
+    ];
 
     return [
       Card(
@@ -201,6 +291,7 @@ class _HealthScreenState extends State<HealthScreen> {
               : null,
         ),
       ),
+      if (hasLitterboxes) _litterboxCard(data['litterboxes'] == null, litterboxes, theme),
       Card(
         child: ListTile(
           leading: const Icon(Icons.dns_outlined),

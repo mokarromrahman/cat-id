@@ -43,6 +43,10 @@ class FakeServer {
       reports[req.url.path] = req.body;
       return _json({'status': 200, 'message': 'sent'});
     }
+    if (req.method == 'POST' && req.url.path == '/litterbox_clean') {
+      reports[req.url.path] = req.body;
+      return _json({'status': 200, 'location': 'x', 'message': 'Litterbox clean recorded.'});
+    }
     if (req.url.path == '/event_types') {
       requests.add(req.url);
       return _json([
@@ -271,7 +275,8 @@ void main() {
       expect(sentTime, endsWith('Z')); // UTC
       final sent = DateTime.parse(sentTime);
       expect(sent.difference(before).inSeconds.abs(), lessThan(5));
-      for (final field in [('cat', 'Litten'), ('info', 'soft stool'), ('user', 'Mac')]) {
+      for (final field in [('cat', 'Litten'), ('info', 'soft stool'), ('user', 'Mac'),
+          ('location', 'basement')]) { // Basement is picked unless changed
         expect(body, contains('name="${field.$1}"\r\n\r\n${field.$2}\r\n'));
       }
       expect(body, isNot(contains('name="file"'))); // no photo picked
@@ -303,6 +308,48 @@ void main() {
       final sentTime = RegExp(r'name="event_time"\r\n\r\n([^\r]+)\r\n').firstMatch(body)!.group(1)!;
       final sent = DateTime.parse(sentTime).toLocal();
       expect((sent.year, sent.month, sent.day), (day.year, day.month, day.day));
+    }, () => server.client);
+  });
+
+  testWidgets('Add event > Litterbox: picking Master Bathroom sends that location',
+      (tester) async {
+    final server = FakeServer();
+    await http.runWithClient(() async {
+      await _pump(tester, await _store());
+      await _tap(tester, find.text('Add event'));
+      await _tap(tester, find.text('Litterbox').last);
+      await _tap(tester, find.text('Shinx').last);
+      expect(find.text('Which litterbox?'), findsOneWidget);
+      await _tap(tester, find.text('Master Bathroom'));
+      await _tap(tester, find.text('Send to Discord'));
+      expect(server.reports['/litterbox']!,
+          contains('name="location"\r\n\r\nmaster_bathroom\r\n'));
+    }, () => server.client);
+  });
+
+  testWidgets('Add event > Clean Litterbox saves the location, bag changed and note',
+      (tester) async {
+    final server = FakeServer();
+    await http.runWithClient(() async {
+      await _pump(tester, await _store());
+      await _tap(tester, find.text('Add event'));
+      await _tap(tester, find.text('Clean Litterbox'));
+      expect(find.text('Which litterbox was cleaned?'), findsOneWidget);
+      expect(find.text('Bag changed'), findsNothing); // shown once a box is picked
+      await _tap(tester, find.text('Basement'));
+      expect(find.text('Add photo'), findsNothing); // no photo for a cleaning
+      expect(find.text('Send to Discord'), findsNothing);
+      await _tap(tester, find.text('Bag changed'));
+      await tester.enterText(find.byType(TextField), 'full litter change');
+      await _tap(tester, find.text('Save'));
+      final body = server.reports['/litterbox_clean']!;
+      for (final field in [('location', 'basement'), ('bag_changed', 'true'),
+          ('info', 'full litter change'), ('user', 'Mac')]) {
+        expect(body, contains('name="${field.$1}"\r\n\r\n${field.$2}\r\n'));
+      }
+      expect(body, contains('name="event_time"'));
+      expect(find.text('Basement cleaning saved (bag changed)'), findsOneWidget);
+      expect(server.reports.containsKey('/litterbox'), isFalse);
     }, () => server.client);
   });
 }

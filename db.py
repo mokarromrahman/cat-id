@@ -7,8 +7,12 @@ Tables (every one also has created_on, modified_by, modified_on):
   label       Litten, Shinx, neither, both; cat_id says which cat a label means
   picture     every photo /litterbox, /identify or /cough receives, its model guess and its label;
               a crop is its own row with parent_picture_id set
-  event       litterbox visits (from labeled pictures) and coughs
+  event       litterbox visits (from labeled pictures) and coughs; a visit can have a location
   vet_visit   vet visits and pickups; soft-deleted with deleted_on
+  location    where a litterbox is: basement, master_bathroom (name is the code, label_name
+              the display label)
+  litterbox_clean_event  a litterbox was cleaned (POST /litterbox_clean), and whether the
+              bag was changed; not tied to a cat
 View active_vet_visit is vet_visit without the soft-deleted rows.
 
 The schema itself is created by Alembic (migrations/). The models here must match it;
@@ -27,7 +31,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from sqlalchemy import (
-    REAL, CheckConstraint, Date, DateTime, FetchedValue, ForeignKey, Identity, Index, Integer,
+    REAL, Boolean, CheckConstraint, Date, DateTime, FetchedValue, ForeignKey, Identity, Index, Integer,
     Numeric, Text, Time, create_engine, delete, func, or_, select, text,
 )
 from sqlalchemy.exc import OperationalError
@@ -126,6 +130,8 @@ class Picture(Audit, Base):
     labeled_by: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"))
     model_version: Mapped[str | None] = mapped_column(Text)
     parent_picture_id: Mapped[int | None] = mapped_column(ForeignKey("picture.id"))
+    # Which litterbox the photo is of (/litterbox photos); None for /identify and cough photos.
+    location_id: Mapped[int | None] = mapped_column(ForeignKey("location.id"))
 
 
 class Event(Audit, Base):
@@ -137,6 +143,9 @@ class Event(Audit, Base):
     picture_id: Mapped[int | None] = mapped_column(ForeignKey("picture.id"), unique=True)
     notes: Mapped[str | None] = mapped_column(Text)
     event_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    # Which litterbox a visit was in (copied from its photo, or picked in the app); None for
+    # coughs and for visits where it isn't known.
+    location_id: Mapped[int | None] = mapped_column(ForeignKey("location.id"))
 
 
 class VetVisit(Audit, Base):
@@ -159,6 +168,26 @@ class VetVisit(Audit, Base):
     follow_up_date: Mapped[date | None] = mapped_column(Date)
     reporter_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"))
     deleted_on: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class Location(Audit, Base):
+    __tablename__ = "location"
+    id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
+    name: Mapped[str] = mapped_column(Text, unique=True)    # code: basement, master_bathroom
+    label_name: Mapped[str] = mapped_column(Text)            # display: Basement, Master Bathroom
+
+
+class LitterboxCleanEvent(Audit, Base):
+    __tablename__ = "litterbox_clean_event"
+    id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
+    location_id: Mapped[int] = mapped_column(ForeignKey("location.id", ondelete="RESTRICT"))
+    # When it was cleaned (picked in the app; default when it was sent) ...
+    event_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    # ... and when the request reached the server (created_on differs only for a replayed row).
+    server_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    reporter_id: Mapped[int] = mapped_column(ForeignKey("app_user.id", ondelete="RESTRICT"))
+    bag_changed: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
+    notes: Mapped[str | None] = mapped_column(Text)
 
 
 # ---------- connection ----------
@@ -315,6 +344,36 @@ def event_types() -> list[dict]:
         DEFAULT_EVENT_TYPES)
 
 
+DEFAULT_LOCATIONS = [{"name": "basement", "label_name": "Basement"},
+                     {"name": "master_bathroom", "label_name": "Master Bathroom"}]
+
+
+def locations() -> list[dict]:
+    """[{name, label_name}] in id order (the seeded list if the DB is down)."""
+    return safe_read(
+        lambda s: [{"name": n, "label_name": l} for n, l in
+                   s.execute(select(Location.name, Location.label_name).order_by(Location.id))],
+        DEFAULT_LOCATIONS)
+
+
+def litterbox_status():
+    """For GET /health: per location, when it was last cleaned and when its bag was last
+    changed (UTC ISO text, or None if never). None if the database can't be reached."""
+    def read(s):
+        last = (select(LitterboxCleanEvent.location_id,
+                       func.max(LitterboxCleanEvent.event_timestamp).label("cleaned"),
+                       func.max(LitterboxCleanEvent.event_timestamp)
+                       .filter(LitterboxCleanEvent.bag_changed).label("bag"))
+                .group_by(LitterboxCleanEvent.location_id).subquery())
+        rows = s.execute(
+            select(Location.name, Location.label_name, last.c.cleaned, last.c.bag)
+            .outerjoin(last, last.c.location_id == Location.id).order_by(Location.id))
+        iso = lambda t: t.astimezone(timezone.utc).isoformat() if t else None
+        return [{"location": n, "name": l, "last_cleaned": iso(c), "bag_last_changed": iso(b)}
+                for n, l, c, b in rows]
+    return safe_read(read, None)
+
+
 def picture_sources(names: list[str]) -> dict:
     """{filename: source} for original photos; names with no row are left out."""
     if not names:
@@ -366,8 +425,11 @@ def _maybe_event(session, pic: Picture, original: Picture, label: Label | None,
             Event.cat_id == label.cat_id, Event.event_type_id == et.id))
     if dup is not None:
         return f"{et.name} for {label.name} already recorded for this photo, no new event"
+    # A litterbox visit happened where the photo was taken; other types have no location.
     session.add(Event(event_type_id=et.id, cat_id=label.cat_id, reporter_id=pic.reporter_id,
-                      picture_id=pic.id, event_timestamp=pic.event_timestamp, modified_by=uid))
+                      picture_id=pic.id, event_timestamp=pic.event_timestamp,
+                      location_id=original.location_id if code == "litterbox" else None,
+                      modified_by=uid))
     return f"{et.name} event recorded for {label.name}"
 
 
@@ -381,7 +443,8 @@ def add_picture(session, p):
         event_timestamp=as_datetime(p["event_timestamp"]), best_guess=p["best_guess"],
         confidence=p["confidence"], predicted_label=p["predicted_label"],
         filename=p["filename"], file_path=p["file_path"], source=p["source"],
-        reporter_id=uid, model_version=p.get("model_version"), modified_by=uid))
+        reporter_id=uid, model_version=p.get("model_version"),
+        location_id=_location_id(session, p.get("location")), modified_by=uid))
     return None
 
 
@@ -415,7 +478,7 @@ def crop_picture(session, p):
         file_path=p["crop_path"], source=orig.source, reporter_id=orig.reporter_id,
         status="labeled", final_label_id=label.id if label else None,
         labeled_on=utcnow(), labeled_by=uid, parent_picture_id=orig.id,
-        model_version=orig.model_version, modified_by=uid)
+        model_version=orig.model_version, location_id=orig.location_id, modified_by=uid)
     session.add(crop)
     if p.get("archived_path"):  # "keep original" was off: the original went to _archived
         orig.status, orig.file_path, orig.modified_by = "archived", p["archived_path"], uid
@@ -471,9 +534,16 @@ def undo_picture(session, p):
     return "Event removed" if removed else None
 
 
+def _location_id(session, name: str | None) -> int | None:
+    """location.id for a location name; None for no name or an unknown one."""
+    if not name:
+        return None
+    return session.scalar(select(Location.id).where(Location.name == name))
+
+
 def _add_reported_event(session, p, type_code: str):
-    """An event someone reported from the app (cat picked by hand), with an optional note
-    and photo. No event for an unknown cat name."""
+    """An event someone reported from the app (cat picked by hand), with an optional note,
+    photo and location. No event for an unknown cat name."""
     cat_id = session.scalar(select(Cat.id).where(Cat.name == p["cat"]))
     if cat_id is None:
         print(f"{type_code} for unknown cat {p['cat']!r}: no event recorded")
@@ -489,6 +559,7 @@ def _add_reported_event(session, p, type_code: str):
         print(f"{type_code} photo {p['photo']!r} has no free picture row: event recorded without it")
     session.add(Event(event_type_id=et, cat_id=cat_id, reporter_id=uid, notes=p.get("notes"),
                       picture_id=pic.id if pic else None,
+                      location_id=_location_id(session, p.get("location")),
                       event_timestamp=as_datetime(p["event_timestamp"]), modified_by=uid))
     return None
 
@@ -504,3 +575,20 @@ def add_litterbox_report(session, p):
     """POST /litterbox with a `cat` (the app's Add litterbox sheet). The Pi's photos get
     their events from labeling instead."""
     return _add_reported_event(session, p, "litterbox")
+
+
+@writer("litterbox_clean")
+def add_litterbox_clean(session, p):
+    """POST /litterbox_clean (the app's Add event > Clean Litterbox). No row for an unknown
+    location name (the endpoint checks it first, so only a replay of a since-removed
+    location gets here)."""
+    loc = _location_id(session, p["location"])
+    if loc is None:
+        print(f"litterbox clean for unknown location {p['location']!r}: nothing recorded")
+        return None
+    uid = user_id(session, p.get("user"))
+    session.add(LitterboxCleanEvent(
+        location_id=loc, event_timestamp=as_datetime(p["event_timestamp"]),
+        server_timestamp=as_datetime(p["server_timestamp"]), reporter_id=uid,
+        bag_changed=bool(p["bag_changed"]), notes=p.get("notes"), modified_by=uid))
+    return None

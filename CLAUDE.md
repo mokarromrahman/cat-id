@@ -25,14 +25,14 @@ https://cat-id.<tailnet>.ts.net, only the owner's and Ashley's phones, only port
 | `db.py` | SQLAlchemy 2 models, connection, `safe_write`/`safe_read`, and the writers (picture, label, crop, archive, delete, undo, cough) that `app.py` and `replay_db_failed.py` share. |
 | `vet_api.py` | `/vet_visit` routes (APIRouter included by `app.py`). |
 | `events_api.py` | `/events`, `/event_types`, `/picture/{id}/image` for the app's Events tab (APIRouter included by `app.py`). |
-| `alembic.ini`, `migrations/` | Alembic. `0001_initial_schema.py`: tables, CHECKs, audit trigger, `active_vet_visit` view, seed rows. |
+| `alembic.ini`, `migrations/` | Alembic. `0001_initial_schema.py`: tables, CHECKs, audit trigger, `active_vet_visit` view, seed rows. `0002_location_and_litterbox_clean.py`: `location`, `litterbox_clean_event`, `location_id` on `picture`/`event`, backfill of the Pi's photos to basement. |
 | `start.py` | Container entry point: waits up to 30 s for Postgres, runs `alembic upgrade head`, then starts uvicorn either way. |
 | `replay_db_failed.py` | Replays `inbox/_db_failed.jsonl` (writes that failed while Postgres was down). |
 | `sorter_core.py` | Framework-free photo sorter shared by `label.py` and `/label`: undo history, crop/rotate, archive, delete, log. Optional `on_action` callback (server only) updates the DB. |
 | `ui/label.{html,css,js}` | The shared label page. Button colours: Litten `#d62828`, Shinx `#f4c20d`, neither `#9a9a9a`, both `#7b4bb5`. Server only: event-type picker and `?user=`. |
 | `img_src/` | Pokémon-style button art (`litten_pokemon.png`, `shinx_pokemon.png`, ...) served at `/asset/<file>`; `app_icon.jpg` for the Android app. |
 | `label.py` | Stdlib server for sorting photos on the Mac (127.0.0.1:8765), same page and API, no database. Must keep working on the Mac's Python 3.9. |
-| `pi_trigger.py` | Raspberry Pi 3: gpiozero `MotionSensor(17)` -> `phone_control.py` takes a photo on a Galaxy S20 FE over adb -> POSTs it to `/litterbox` with `user=pi`. 20 s cooldown. Config via `.env` (`SERVER`, `API_KEY`, optional `CAT_ID_USER`). |
+| `pi_trigger.py` | Raspberry Pi 3: gpiozero `MotionSensor(17)` -> `phone_control.py` takes a photo on a Galaxy S20 FE over adb -> POSTs it to `/litterbox` with `user=pi`. 20 s cooldown. Config via `.env` (`SERVER`, `API_KEY`, optional `CAT_ID_USER`, optional `CAT_ID_LOCATION`, sent as `location`). |
 | `phone_control.py` | `PhoneController` (pure-python-adb): wake screen, take photo, fetch newest file from `/sdcard/DCIM/Camera/`. Needs an `adb` server running on the Pi. |
 | `pi_requirements.txt` | Pi-only deps: pure-python-adb, gpiozero, lgpio, requests, python-dotenv |
 | `cat_id_app/` | Flutter Android app (see below). Excluded in `.dockerignore`. |
@@ -47,11 +47,18 @@ Not in git: `data/`, `inbox/`, `model.joblib`, `embeddings_cache.npz`, `hf_cache
   No Discord. Below `MIN_CONF` (0.75) the `cat` is `"uncertain"`. Records a `picture` row
   (source `identify`) after the response.
 - `POST /litterbox`: same as `/identify` (photo saved once, source `litterbox`), plus posts to
-  `DISCORD_WEBHOOK_URL`. This is what the Pi calls. With form `cat` (plus optional `info`,
-  `file`, `event_time`) it's a visit reported by hand from the app: handled like `/cough` (shared
-  `report_event()`; db writer `litterbox_report`), the event is recorded now, photo source
-  `litterbox`, posted to `DISCORD_WEBHOOK_URL`, `null` if that isn't set. No `cat` and no
-  `file` gives 400.
+  `DISCORD_WEBHOOK_URL`. This is what the Pi calls. Optional form `location` (a `location.name`):
+  the box the photo is of; missing = `PI_LOCATION` env (default `basement`). With form `cat`
+  (plus optional `info`, `file`, `event_time`, `location`) it's a visit reported by hand from the
+  app: handled like `/cough` (shared `report_event()`; db writer `litterbox_report`), the event
+  is recorded now, photo source `litterbox`, `location` missing = not known, posted to
+  `DISCORD_WEBHOOK_URL`, `null` if that isn't set. No `cat` and no `file` gives 400; an unknown
+  location gives 400.
+- `POST /litterbox_clean` (form `location`, `key`, optional `bag_changed` true/false (default
+  false), `info`, `user`, `event_time`): records a `litterbox_clean_event` row (db writer
+  `litterbox_clean`, after the response). `event_time` as for `/cough`; `server_timestamp` is
+  the arrival time. No Discord. Returns `{status, location, message}`. Missing/unknown
+  location, bad `bag_changed` or `event_time`: 400, nothing saved.
 - `POST /cough` (form `cat`, `key`, optional `info`, `user`, `file`): records a cough event, posts a
   text report to `COUGH_DISCORD_WEBHOOK_URL`. Returns `null` (200) if that webhook isn't set
   (the event is still recorded). Checks the key but not the model. An optional photo is
@@ -69,7 +76,8 @@ Not in git: `data/`, `inbox/`, `model.joblib`, `embeddings_cache.npz`, `hf_cache
   see `events_api.py`. View only. Key in `X-API-Key`; 503 if the DB is down. Totals and chart
   data cover the whole filtered range and come with the first page only.
 - `GET /health`: `{model_loaded, classes, photos: {class: count}, waiting_in_inbox, version,
-  commit}`. `version`/`commit` come from the `CAT_ID_VERSION`/`CAT_ID_COMMIT` build args baked
+  commit, litterboxes}`. `litterboxes`: per location `{location, name, last_cleaned,
+  bag_last_changed}` (UTC, null if never), or null if the DB is down (`db.litterbox_status()`). `version`/`commit` come from the `CAT_ID_VERSION`/`CAT_ID_COMMIT` build args baked
   into the image (`release.yml` passes the tag and `github.sha`); a local build says `dev` and
   `null` unless you run `CAT_ID_COMMIT=$(git rev-parse HEAD) docker compose up -d --build`.
   The app's Health tab shows them ("Server v0.2.0", "Commit 433c253").
@@ -82,7 +90,7 @@ Not in git: `data/`, `inbox/`, `model.joblib`, `embeddings_cache.npz`, `hf_cache
   `inbox/_both`; Done/Skip goes to `inbox/_archived`; Delete really deletes (undoable in-session).
   Use `shutil.move`, not `Path.rename` (separate Docker bind mounts). The label buttons come from
   the folders in `data/`.
-- `/identify`, `/litterbox`, `/cough`, `/vet_visit`, `/events`, `/event_types` and
+- `/identify`, `/litterbox`, `/litterbox_clean`, `/cough`, `/vet_visit`, `/events`, `/event_types` and
   `/picture/{id}/image` check `API_KEY`. `/label` and its
   `/api/*` routes don't, on purpose (owner's choice): anyone on the home network can label.
 
@@ -92,17 +100,19 @@ Not in git: `data/`, `inbox/`, `model.joblib`, `embeddings_cache.npz`, `hf_cache
   (seeded `system`, `pi`, `Ashley`, `Mac`), `cat` (Litten, Shinx only; both born 2023-06-15,
   gotcha day 2023-11-21), `event_type` (`litterbox`/Litterbox, `cough`/Cough: code + display
   name), `label` (Litten, Shinx, neither, both, with optional cat), `picture`, `event`,
-  `vet_visit`. View `active_vet_visit`. Diagram: https://claude.ai/artifact/NsFLSjW8gcAGmHAmhoJRYa
+  `vet_visit`, `location` (`basement`/Basement, `master_bathroom`/Master Bathroom: unique `name`
+  + `label_name`), `litterbox_clean_event`. View `active_vet_visit`. Diagram: https://claude.ai/artifact/NsFLSjW8gcAGmHAmhoJRYa
 - A trigger on every table sets `modified_on` on insert/update (DBeaver edits too) and fills an
   empty `modified_by` with `system`. Integer identity IDs. No edit-history table.
 - `user` on every request is an `app_user` name; missing or unknown means `system`.
 - `picture`: one row per photo received (`event_timestamp` = UTC time the request arrived,
   model guess, `filename`, current `file_path`, `source`, `reporter_id`, `status`
   pending/labeled/archived/deleted, `final_label_id`, `labeled_on`, `labeled_by`,
-  `model_version`). A crop is its own row with `parent_picture_id`. Original filenames are
+  `model_version`, `location_id`: the box for `/litterbox` photos, null otherwise; crops copy it). A crop is its own row with `parent_picture_id`. Original filenames are
   unique; crop filenames aren't (same crop name can exist in two cat folders). Deleted photos
   keep their row.
-- `event`: always a real cat. Litterbox-type events come from labeling on `/label` (a
+- `event`: always a real cat. `location_id` (nullable): litterbox visits only, copied from the
+  photo when labeling, or picked in the app for a hand report; coughs have none. Litterbox-type events come from labeling on `/label` (a
   Litten/Shinx label, plain or crop, with an event type) or from a hand report
   (`/litterbox` with `cat`). The picker defaults to `litterbox` for
   `/litterbox` photos and None otherwise; `event_type` missing means that default, `"none"`
@@ -114,6 +124,10 @@ Not in git: `data/`, `inbox/`, `model.joblib`, `embeddings_cache.npz`, `hf_cache
   litterbox visits create an event directly (picture only if a photo was sent; unknown cat
   name -> no event). Cats/users with events can't be
   deleted.
+- `litterbox_clean_event`: `location_id` (required), `event_timestamp` (when it was cleaned),
+  `server_timestamp` (when the request arrived; differs from `created_on` only for a replayed
+  row), `reporter_id`, `bag_changed` (bool, default false), `notes`. No cat, no photo, not in
+  `/events`.
 - `vet_visit`: `cat_id` nullable (pickups), `visit_date` (date), `appointment_time` (time,
   Edmonton clock), `doctor`, `clinic` (default `unknown`), `notes`, `reason` text[] (checkup,
   shots, emergency, food pickup, medication pickup, other; at least one), `weight_kg`
@@ -143,12 +157,15 @@ Not in git: `data/`, `inbox/`, `model.joblib`, `embeddings_cache.npz`, `hf_cache
 
 Flutter, Android only, sideloaded (not on the Play Store). Tabs, in `kTabOrder` in
 `lib/screens/home_screen.dart`: Health, Identify, Events, Vet, Label. Cough has no tab: the
-Events tab's Add event menu (Litterbox / Cough) opens `ReportEventScreen`
+Events tab's Add event menu (Litterbox / Cough / Clean Litterbox) opens `ReportEventScreen`
 (`screens/report_event_screen.dart`, `ReportKind`) in a sheet: cat, When (date then time
 picker; default "Now", any past date, not the future; sent as `event_time` in UTC), note,
 optional photo
 from gallery or camera, "Send to Discord" (a camera photo lost to Android closing the app
-comes back on Identify). The Identify tab only identifies (no Discord button; that moved
+comes back on Identify). Litterbox also has "Which litterbox?" (Basement default, or Master
+Bathroom). Clean Litterbox (`ReportKind.clean`): pick the box instead of a cat, When,
+"Bag changed" switch, note, no photo, "Save" (no Discord). Locations are `kLitterboxLocations`
+in `api.dart` (keep in step with the `location` table). The Identify tab only identifies (no Discord button; that moved
 to Add event > Litterbox).
 
 - Up to 5 servers saved (`server_store.dart`, SharedPreferences); each server's API key in
@@ -159,6 +176,9 @@ to Add event > Litterbox).
 - "Who am I" (`who_am_i.dart`): Ashley or Mac, one setting per phone, picked from the app bar.
   Sent as `user` on identify, litterbox, cough and vet requests, and as `?user=` on the Label
   web view. Not set means nothing is sent (server records `system`).
+- Health tab: a Litterboxes card per location: "Last cleaned <day, time> (<ago>)", red with a
+  warning icon when over 24 h or never (`kCleanOverdueAfter`), and "Bag was last changed <day,
+  time>" (no highlight). Hidden for servers without `litterboxes`.
 - Label tab is a WebView of the server's `/label`. Health and Label reload each time you
   switch to them; Identify, Events and Vet keep their state (Events: pull down to refresh).
 - Events tab (`screens/events_screen.dart`), view only. Filters, one value each: cat (Both /
@@ -175,10 +195,11 @@ to Add event > Litterbox).
   cost, follow-up and notes per cat) and the visit list with edit, delete, "Show deleted" and
   restore. No offline caching: if the server can't be reached it shows the error.
 - `api.dart`: `health()`, `identify(path, sendToDiscord:)` (`/identify` or `/litterbox`; the app now only
-  uses `/identify`), `cough(cat, info, photoPath:, when:)`, `litterbox(cat, info, photoPath:, when:)`, `vetVisits`, `addVetVisits`, `editVetVisit`, `deleteVetVisit`,
+  uses `/identify`), `cough(cat, info, photoPath:, when:)`, `litterbox(cat, info, photoPath:, when:, location:)`,
+  `litterboxClean(location, bagChanged:, info:, when:)`, `vetVisits`, `addVetVisits`, `editVetVisit`, `deleteVetVisit`,
   `restoreVetVisit`, `eventTypes`, `events`, `pictureUri`, `retrain()`.
-- Tests: `flutter test` (`test/vet_screen_test.dart` and `test/events_screen_test.dart` drive
-  the Vet and Events tabs against a fake server).
+- Tests: `flutter test` (`test/vet_screen_test.dart`, `test/events_screen_test.dart` and
+  `test/health_screen_test.dart` drive the Vet, Events and Health tabs against a fake server).
 - Build: `cd cat_id_app && flutter run --release` or `flutter build apk --release`.
   Release build has `isMinifyEnabled = false` / `isShrinkResources = false` in
   `android/app/build.gradle.kts` (R8 broke shared_preferences). minSdk 24.

@@ -12,6 +12,37 @@ String _two(int n) => n.toString().padLeft(2, '0');
 /// "2026-11-13": a day as the server's date parameters expect it.
 String isoDay(DateTime d) => '${d.year}-${_two(d.month)}-${_two(d.day)}';
 
+/// A litterbox location (the server's location table): `name` is the code sent to the
+/// server, `label` the display name.
+class LitterboxLocation {
+  const LitterboxLocation(this.name, this.label);
+  final String name;
+  final String label;
+}
+
+/// The seeded locations, in the server's order. Basement is the default for a visit.
+const kLitterboxLocations = [
+  LitterboxLocation('basement', 'Basement'),
+  LitterboxLocation('master_bathroom', 'Master Bathroom'),
+];
+
+/// One location's row of GET /health's `litterboxes`: when that box was last cleaned and
+/// when its bag was last changed (null = never recorded).
+class LitterboxStatus {
+  LitterboxStatus.fromJson(Map<String, dynamic> j)
+      : location = j['location'] as String,
+        name = (j['name'] as String?) ?? j['location'] as String,
+        lastCleaned = _time(j['last_cleaned']),
+        bagLastChanged = _time(j['bag_last_changed']);
+
+  static DateTime? _time(dynamic v) => v is String ? DateTime.parse(v).toLocal() : null;
+
+  final String location;
+  final String name;
+  final DateTime? lastCleaned;
+  final DateTime? bagLastChanged;
+}
+
 /// One row of the server's event_type table: `type` is the code, `name` the display label.
 class EventType {
   EventType.fromJson(Map<String, dynamic> j)
@@ -54,6 +85,7 @@ class CatEvent {
         when = DateTime.parse(j['event_timestamp'] as String).toLocal(),
         reporter = j['reporter'] as String?,
         notes = j['notes'] as String?,
+        location = (j['location'] as Map?)?['label_name'] as String?,
         picture = j['picture'] == null
             ? null
             : EventPicture.fromJson(j['picture'] as Map<String, dynamic>);
@@ -67,6 +99,9 @@ class CatEvent {
   final DateTime when;
   final String? reporter;
   final String? notes;
+
+  /// Which litterbox (display name), for visits where it's known.
+  final String? location;
   final EventPicture? picture;
 }
 
@@ -244,15 +279,19 @@ class CatApi {
 
   /// POST /litterbox with `cat`: a litterbox visit reported by hand. Same as [cough]: the
   /// server records the event now and posts it to the litterbox Discord channel.
-  Future<void> litterbox(String cat, String info, {String? photoPath, DateTime? when}) =>
-      _report('/litterbox', cat, info, photoPath, when, 'litterbox');
+  /// [location] is a [LitterboxLocation.name]; null means not known.
+  Future<void> litterbox(String cat, String info,
+          {String? photoPath, DateTime? when, String? location}) =>
+      _report('/litterbox', cat, info, photoPath, when, 'litterbox',
+          extra: {'location': ?location});
 
   Future<void> _report(String path, String cat, String info, String? photoPath,
-      DateTime? when, String what) async {
+      DateTime? when, String what, {Map<String, String> extra = const {}}) async {
     final r = await _guard(() async {
       final req = http.MultipartRequest('POST', _uri(path))
         ..fields['cat'] = cat
-        ..fields['key'] = apiKey;
+        ..fields['key'] = apiKey
+        ..fields.addAll(extra);
       if (info.trim().isNotEmpty) req.fields['info'] = info.trim();
       req.fields['event_time'] = (when ?? DateTime.now()).toUtc().toIso8601String();
       final user = _user;
@@ -279,6 +318,25 @@ class CatApi {
           'The $what was saved, but the server has no $what Discord webhook set, so nothing was posted.');
     }
     _json(r); // not 200: throws the matching error
+  }
+
+  /// POST /litterbox_clean: a litterbox was cleaned. [location] is a
+  /// [LitterboxLocation.name]; [when] as in [cough]. Nothing goes to Discord.
+  Future<void> litterboxClean(String location,
+      {required bool bagChanged, String info = '', DateTime? when}) async {
+    final r = await _guard(() async {
+      final req = http.MultipartRequest('POST', _uri('/litterbox_clean'))
+        ..fields['location'] = location
+        ..fields['bag_changed'] = bagChanged ? 'true' : 'false'
+        ..fields['key'] = apiKey
+        ..fields['event_time'] = (when ?? DateTime.now()).toUtc().toIso8601String();
+      if (info.trim().isNotEmpty) req.fields['info'] = info.trim();
+      final user = _user;
+      if (user != null) req.fields['user'] = user;
+      final streamed = await req.send().timeout(const Duration(seconds: 30));
+      return http.Response.fromStream(streamed);
+    });
+    _detailBody(r, 'litterbox cleaning'); // throws on anything but 200
   }
 
   // ---------- vet visits (server: vet_api.py) ----------

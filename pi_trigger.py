@@ -22,6 +22,8 @@ API_KEY = os.environ.get("API_KEY", "")
 # Recorded as the photo's reporter on the server (a seeded app_user). Not called USER,
 # which the shell already sets to the login name.
 CAT_ID_USER = os.environ.get("CAT_ID_USER", "pi")
+# Which litterbox this Pi watches (a location name); not set = the server's PI_LOCATION (basement).
+CAT_ID_LOCATION = os.environ.get("CAT_ID_LOCATION", "")
 COOLDOWN = 20  # seconds; stops one visit from firing many alerts
 
 sensor = MotionSensor(17)
@@ -36,7 +38,8 @@ def capture_and_send(phone: PhoneController):
             r = requests.post(
                 SERVER,
                 files={"file": (filename, image_buffer, "image/jpeg")},
-                data={"key": API_KEY, "user": CAT_ID_USER},
+                data={"key": API_KEY, "user": CAT_ID_USER,
+                      **({"location": CAT_ID_LOCATION} if CAT_ID_LOCATION else {})},
                 timeout=60,
             )
         except Exception as e:

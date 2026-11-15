@@ -11,11 +11,13 @@ import '../server_store.dart';
 const _littenColor = Color(0xFFD62828);
 const _shinxColor = Color(0xFFF4C20D);
 
-/// What the sheet reports: a cough (POST /cough) or a litterbox visit (POST /litterbox
-/// with `cat`).
+/// What the sheet reports: a cough (POST /cough), a litterbox visit (POST /litterbox
+/// with `cat`) or a litterbox cleaning (POST /litterbox_clean: a location instead of a
+/// cat, "Bag changed", no photo, no Discord).
 enum ReportKind {
   cough('Who coughed?', 'e.g. after eating, lasted about 10 seconds'),
-  litterbox('Who used the litterbox?', 'e.g. pee and poop, soft stool');
+  litterbox('Who used the litterbox?', 'e.g. pee and poop, soft stool'),
+  clean('Which litterbox was cleaned?', 'e.g. topped up the litter, box was very full');
 
   const ReportKind(this.question, this.hint);
   final String question;
@@ -25,7 +27,8 @@ enum ReportKind {
 /// Report an event by hand (the Events tab's Add event menu): choose Litten or Shinx, set
 /// when it happened (default now; any past date and time), add a note and a photo if you
 /// like, and the server records the event and posts it to
-/// Discord. The photo also goes to the server's label queue and shows on the event in the
+/// Discord. A litterbox visit also says which box (Basement unless changed). A cleaning
+/// picks the box instead of a cat, plus "Bag changed"; it is only saved, not posted. The photo also goes to the server's label queue and shows on the event in the
 /// Events tab. The cat pictures are the same img_src/ files the label pages use, loaded
 /// from the server's /asset/ route, so there is only one copy of them.
 class ReportEventScreen extends StatefulWidget {
@@ -45,8 +48,20 @@ class _ReportEventScreenState extends State<ReportEventScreen> {
   String? _cat;
   bool _busy = false;
   String? _error;
-  String? _sentFor;
+
+  /// The success line after a send, e.g. "Sent to Discord for Litten".
+  String? _sent;
   XFile? _photo;
+
+  /// Clean: the box picked (null until tapped). Visit: which box, Basement by default.
+  String? _cleanLocation;
+  String _visitLocation = kLitterboxLocations.first.name;
+  bool _bagChanged = false;
+
+  bool get _isClean => widget.kind == ReportKind.clean;
+
+  /// The main choice is made: a cat, or the box for a cleaning.
+  bool get _ready => _isClean ? _cleanLocation != null : _cat != null;
 
   /// When it happened; null = now (the moment Send is tapped).
   DateTime? _when;
@@ -65,9 +80,22 @@ class _ReportEventScreenState extends State<ReportEventScreen> {
     setState(() {
       _cat = cat;
       _error = null;
-      _sentFor = null;
+      _sent = null;
     });
   }
+
+  void _chooseLocation(String location) {
+    if (_busy) return;
+    setState(() {
+      _cleanLocation = location;
+      _error = null;
+      _sent = null;
+    });
+  }
+
+  static String _locationLabel(String name) => kLitterboxLocations
+      .firstWhere((l) => l.name == name, orElse: () => LitterboxLocation(name, name))
+      .label;
 
   Future<void> _pick(ImageSource source) async {
     try {
@@ -81,7 +109,7 @@ class _ReportEventScreenState extends State<ReportEventScreen> {
       setState(() {
         _photo = f;
         _error = null;
-        _sentFor = null;
+        _sent = null;
       });
     } catch (e) {
       if (!mounted) return;
@@ -111,7 +139,7 @@ class _ReportEventScreenState extends State<ReportEventScreen> {
     final picked = DateTime(date.year, date.month, date.day, time.hour, time.minute);
     final later = DateTime.now();
     setState(() {
-      _sentFor = null;
+      _sent = null;
       if (picked.isAfter(later)) {
         _error = "That time hasn't happened yet. Pick now or earlier.";
       } else {
@@ -140,30 +168,43 @@ class _ReportEventScreenState extends State<ReportEventScreen> {
   }
 
   Future<void> _send() async {
+    if (!_ready || _busy) return;
     final cat = _cat;
-    if (cat == null || _busy) return;
+    final cleaned = _cleanLocation;
     setState(() {
       _busy = true;
       _error = null;
-      _sentFor = null;
+      _sent = null;
     });
     try {
       final key = await widget.store.keyFor(widget.server.id);
       final api = CatApi(widget.server, key);
       final photo = _photo?.path;
+      final String sent;
       switch (widget.kind) {
         case ReportKind.cough:
-          await api.cough(cat, _info.text, photoPath: photo, when: _when);
+          await api.cough(cat!, _info.text, photoPath: photo, when: _when);
+          sent = 'Sent to Discord for $cat';
         case ReportKind.litterbox:
-          await api.litterbox(cat, _info.text, photoPath: photo, when: _when);
+          await api.litterbox(cat!, _info.text,
+              photoPath: photo, when: _when, location: _visitLocation);
+          sent = 'Sent to Discord for $cat';
+        case ReportKind.clean:
+          await api.litterboxClean(cleaned!,
+              bagChanged: _bagChanged, info: _info.text, when: _when);
+          sent = '${_locationLabel(cleaned)} cleaning saved'
+              '${_bagChanged ? ' (bag changed)' : ''}';
       }
       if (!mounted) return;
       setState(() {
-        _sentFor = cat;
+        _sent = sent;
         _cat = null; // ready for the next report
+        _cleanLocation = null;
+        _bagChanged = false;
         _info.clear();
         _photo = null;
         _when = null;
+        // _visitLocation stays: the next visit is likely in the same box.
       });
     } on ApiException catch (e) {
       if (!mounted) return;
@@ -241,32 +282,64 @@ class _ReportEventScreenState extends State<ReportEventScreen> {
       children: [
         Text(widget.kind.question, style: theme.textTheme.titleMedium),
         const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: _CatTile(
-                name: 'Litten',
-                color: _littenColor,
-                imageUrl: _assetUrl('litten_pokemon.png'),
-                selected: _cat == 'Litten',
-                dimmed: _cat != null && _cat != 'Litten',
-                onTap: () => _choose('Litten'),
+        if (_isClean)
+          Row(
+            children: [
+              for (final (i, l) in kLitterboxLocations.indexed) ...[
+                if (i > 0) const SizedBox(width: 12),
+                Expanded(
+                  child: _LocationTile(
+                    label: l.label,
+                    icon: l.name == 'basement' ? Icons.stairs_outlined : Icons.bathtub_outlined,
+                    selected: _cleanLocation == l.name,
+                    dimmed: _cleanLocation != null && _cleanLocation != l.name,
+                    onTap: () => _chooseLocation(l.name),
+                  ),
+                ),
+              ],
+            ],
+          )
+        else
+          Row(
+            children: [
+              Expanded(
+                child: _CatTile(
+                  name: 'Litten',
+                  color: _littenColor,
+                  imageUrl: _assetUrl('litten_pokemon.png'),
+                  selected: _cat == 'Litten',
+                  dimmed: _cat != null && _cat != 'Litten',
+                  onTap: () => _choose('Litten'),
+                ),
               ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _CatTile(
-                name: 'Shinx',
-                color: _shinxColor,
-                imageUrl: _assetUrl('shinx_pokemon.png'),
-                selected: _cat == 'Shinx',
-                dimmed: _cat != null && _cat != 'Shinx',
-                onTap: () => _choose('Shinx'),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _CatTile(
+                  name: 'Shinx',
+                  color: _shinxColor,
+                  imageUrl: _assetUrl('shinx_pokemon.png'),
+                  selected: _cat == 'Shinx',
+                  dimmed: _cat != null && _cat != 'Shinx',
+                  onTap: () => _choose('Shinx'),
+                ),
               ),
+            ],
+          ),
+        if (_ready) ...[
+          if (widget.kind == ReportKind.litterbox) ...[
+            const SizedBox(height: 16),
+            Text('Which litterbox?', style: theme.textTheme.titleSmall),
+            const SizedBox(height: 8),
+            SegmentedButton<String>(
+              segments: [
+                for (final l in kLitterboxLocations)
+                  ButtonSegment(value: l.name, label: Text(l.label)),
+              ],
+              selected: {_visitLocation},
+              onSelectionChanged:
+                  _busy ? null : (v) => setState(() => _visitLocation = v.first),
             ),
           ],
-        ),
-        if (_cat != null) ...[
           const SizedBox(height: 16),
           Card.outlined(
             margin: EdgeInsets.zero,
@@ -284,6 +357,17 @@ class _ReportEventScreenState extends State<ReportEventScreen> {
                     ),
             ),
           ),
+          if (_isClean) ...[
+            const SizedBox(height: 8),
+            SwitchListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+              secondary: const Icon(Icons.delete_outline),
+              title: const Text('Bag changed'),
+              subtitle: const Text('The litter bag was replaced too'),
+              value: _bagChanged,
+              onChanged: _busy ? null : (v) => setState(() => _bagChanged = v),
+            ),
+          ],
           const SizedBox(height: 16),
           TextField(
             controller: _info,
@@ -297,14 +381,16 @@ class _ReportEventScreenState extends State<ReportEventScreen> {
               border: const OutlineInputBorder(),
             ),
           ),
-          const SizedBox(height: 16),
-          _photoSection(theme),
+          if (!_isClean) ...[
+            const SizedBox(height: 16),
+            _photoSection(theme),
+          ],
         ],
         const SizedBox(height: 16),
         FilledButton.icon(
-          icon: const Icon(Icons.send),
-          label: const Text('Send to Discord'),
-          onPressed: _cat == null || _busy ? null : _send,
+          icon: Icon(_isClean ? Icons.save_outlined : Icons.send),
+          label: Text(_isClean ? 'Save' : 'Send to Discord'),
+          onPressed: !_ready || _busy ? null : _send,
         ),
         const SizedBox(height: 16),
         if (_busy) const Center(child: CircularProgressIndicator()),
@@ -324,11 +410,11 @@ class _ReportEventScreenState extends State<ReportEventScreen> {
               ),
             ),
           ),
-        if (_sentFor != null)
+        if (_sent != null)
           Card(
             child: ListTile(
               leading: const Icon(Icons.check_circle, color: Colors.greenAccent),
-              title: Text("Sent to Discord for $_sentFor"),
+              title: Text(_sent!),
             ),
           ),
       ],
@@ -410,6 +496,71 @@ class _CatTile extends StatelessWidget {
                       top: 8,
                       right: 8,
                       child: Icon(Icons.check_circle, color: Colors.white, size: 28),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A litterbox location button for a cleaning: an icon and the name, picked like a cat tile.
+class _LocationTile extends StatelessWidget {
+  const _LocationTile({
+    required this.label,
+    required this.icon,
+    required this.selected,
+    required this.dimmed,
+    required this.onTap,
+  });
+
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final bool dimmed;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final radius = BorderRadius.circular(16);
+    return Opacity(
+      opacity: dimmed ? 0.45 : 1.0,
+      child: AspectRatio(
+        aspectRatio: 1.4,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          decoration: BoxDecoration(
+            borderRadius: radius,
+            border: Border.all(color: scheme.primary, width: selected ? 4 : 0),
+          ),
+          child: Material(
+            color: scheme.secondaryContainer,
+            borderRadius: radius,
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              onTap: onTap,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(icon, size: 44, color: scheme.onSecondaryContainer),
+                      const SizedBox(height: 8),
+                      Text(label,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(fontSize: 16, color: scheme.onSecondaryContainer)),
+                    ],
+                  ),
+                  if (selected)
+                    Positioned(
+                      top: 8,
+                      right: 8,
+                      child: Icon(Icons.check_circle, color: scheme.primary, size: 28),
                     ),
                 ],
               ),
