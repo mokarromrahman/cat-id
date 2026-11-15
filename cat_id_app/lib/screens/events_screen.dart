@@ -180,9 +180,14 @@ class _EventsScreenState extends State<EventsScreen> {
       isScrollControlled: true,
       useSafeArea: true,
       showDragHandle: true,
-      builder: (context) => FractionallySizedBox(
-        heightFactor: 0.85,
-        child: ReportEventScreen(store: widget.store, server: widget.server, kind: kind),
+      // Pad by the keyboard height so the sheet sits above the keyboard and the
+      // ListView can scroll the note field into view (a sheet doesn't do this itself).
+      builder: (context) => Padding(
+        padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+        child: FractionallySizedBox(
+          heightFactor: 0.85,
+          child: ReportEventScreen(store: widget.store, server: widget.server, kind: kind),
+        ),
       ),
     );
     if (mounted) _load(); // show the event that was just sent
