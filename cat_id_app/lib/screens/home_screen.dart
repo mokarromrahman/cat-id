@@ -11,7 +11,8 @@ import 'label_screen.dart';
 import 'servers_screen.dart';
 import 'vet_screen.dart';
 
-/// Cough has no tab of its own: the Events tab's "Add cough" button opens the cough form.
+/// Cough has no tab of its own: the Events tab's "Add event" menu opens the cough or
+/// litterbox form.
 enum AppTab { identify, label, health, events, vet }
 
 /// The order of the buttons along the bottom, left to right.

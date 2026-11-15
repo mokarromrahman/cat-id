@@ -5,7 +5,7 @@ Tables (every one also has created_on, modified_by, modified_on):
   cat         Litten and Shinx (a CHECK allows only those names)
   event_type  litterbox, cough (type is the code, name the display label)
   label       Litten, Shinx, neither, both; cat_id says which cat a label means
-  picture     every photo /litterbox or /identify receives, its model guess and its label;
+  picture     every photo /litterbox, /identify or /cough receives, its model guess and its label;
               a crop is its own row with parent_picture_id set
   event       litterbox visits (from labeled pictures) and coughs
   vet_visit   vet visits and pickups; soft-deleted with deleted_on
@@ -356,6 +356,10 @@ def _maybe_event(session, pic: Picture, original: Picture, label: Label | None,
     et = session.scalar(select(EventType).where(EventType.type == code))
     if et is None:
         return f"Unknown event type '{code}', no event"
+    # event.picture_id is unique: a photo sent with a cough report already has its event.
+    linked = session.scalar(select(EventType.name).join(Event).where(Event.picture_id == pic.id))
+    if linked is not None:
+        return f"This photo already has a {linked} event, no new event"
     dup = session.scalar(
         select(Event.id).join(Picture, Event.picture_id == Picture.id).where(
             or_(Picture.id == original.id, Picture.parent_picture_id == original.id),
@@ -391,7 +395,9 @@ def label_picture(session, p):
     label = session.scalar(select(Label).where(Label.name == p["label"]))
     pic.status, pic.file_path = "labeled", p["file_path"]
     pic.final_label_id = label.id if label else None
-    pic.labeled_on, pic.labeled_by, pic.modified_by = utcnow(), uid, uid
+    # now() is the transaction start, the same as the created_on of an event made below;
+    # undo uses that to tell it apart from an event that was already there (a cough's).
+    pic.labeled_on, pic.labeled_by, pic.modified_by = func.now(), uid, uid
     session.flush()
     return _maybe_event(session, pic, pic, label, p.get("event_type"), uid)
 
@@ -454,21 +460,47 @@ def undo_picture(session, p):
             removed = session.execute(delete(Event).where(Event.picture_id == crop.id)).rowcount
             session.delete(crop)
     elif orig is not None:
-        removed = session.execute(delete(Event).where(Event.picture_id == orig.id)).rowcount
+        # Only an event the label made (created in the labeling transaction). A cough sent
+        # with this photo is older and stays; archive and delete never make one.
+        if orig.labeled_on is not None:
+            removed = session.execute(delete(Event).where(
+                Event.picture_id == orig.id, Event.created_on >= orig.labeled_on)).rowcount
         orig.final_label_id = orig.labeled_on = orig.labeled_by = None
     if orig is not None:
         orig.status, orig.file_path, orig.modified_by = "pending", p["orig_path"], uid
     return "Event removed" if removed else None
 
 
-@writer("cough")
-def add_cough(session, p):
+def _add_reported_event(session, p, type_code: str):
+    """An event someone reported from the app (cat picked by hand), with an optional note
+    and photo. No event for an unknown cat name."""
     cat_id = session.scalar(select(Cat.id).where(Cat.name == p["cat"]))
     if cat_id is None:
-        print(f"cough for unknown cat {p['cat']!r}: no event recorded")
+        print(f"{type_code} for unknown cat {p['cat']!r}: no event recorded")
         return None
     uid = user_id(session, p.get("user"))
-    et = session.scalar(select(EventType.id).where(EventType.type == "cough"))
+    et = session.scalar(select(EventType.id).where(EventType.type == type_code))
+    # A photo sent with the report: its picture row is written just before this (same
+    # request, and in the same order in the failed file), so look it up by name.
+    pic = _original(session, p["photo"]) if p.get("photo") else None
+    if pic is not None and session.scalar(select(Event.id).where(Event.picture_id == pic.id)):
+        pic = None  # name clash with another photo from the same second that has an event
+    if p.get("photo") and pic is None:
+        print(f"{type_code} photo {p['photo']!r} has no free picture row: event recorded without it")
     session.add(Event(event_type_id=et, cat_id=cat_id, reporter_id=uid, notes=p.get("notes"),
+                      picture_id=pic.id if pic else None,
                       event_timestamp=as_datetime(p["event_timestamp"]), modified_by=uid))
     return None
+
+
+@writer("cough")
+def add_cough(session, p):
+    """POST /cough."""
+    return _add_reported_event(session, p, "cough")
+
+
+@writer("litterbox_report")
+def add_litterbox_report(session, p):
+    """POST /litterbox with a `cat` (the app's Add litterbox sheet). The Pi's photos get
+    their events from labeling instead."""
+    return _add_reported_event(session, p, "litterbox")

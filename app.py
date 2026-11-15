@@ -5,9 +5,17 @@ POST /identify   upload a photo (form: file, key, optional user) -> JSON
                  `picture` row (source identify), no Discord
 POST /litterbox  same as /identify (source litterbox), and also posts the result + photo
                  to Discord. The Pi sends user=pi.
-POST /cough      form: cat, key, optional info, optional user -> records a cough event and
-                 posts to the cough Discord channel; returns null if that webhook isn't set
-                 (the event is still recorded)
+                 With form `cat` (and optional info, file): a visit reported by hand from
+                 the app's Events tab. Works like /cough: the litterbox event is recorded
+                 now, a photo is optional (saved like /identify's, source litterbox, linked
+                 to the event), posts to the litterbox Discord channel; returns null if that
+                 webhook isn't set (the event is still recorded)
+POST /cough      form: cat, key, optional info, optional user, optional file -> records a
+                 cough event and posts to the cough Discord channel; returns null if that
+                 webhook isn't set (the event is still recorded). A photo in `file` is
+                 handled like /identify's (model guess, saved to inbox/ for labeling,
+                 `picture` row with source identify), linked to the event, attached to the
+                 Discord post, and returned as "photo" (the /identify JSON)
 GET  /label      page to label captured photos (grows the dataset); same page and
                  /api/* as label.py, see sorter_core.py and ui/. Optional ?user=<name>
                  records who labeled. Labeling Litten or Shinx with an event type (default
@@ -127,10 +135,13 @@ def identify_photo(raw: bytes, tasks: BackgroundTasks, *, received: datetime, so
     except Exception:
         raise HTTPException(400, "not an image")
 
-    cat, conf = classify(img)
-    label = cat if conf >= MIN_CONF else "uncertain"
-
-    name = f"{int(time.time())}_{label}_{conf:.2f}.jpg"
+    if bundle is not None:
+        cat, conf = classify(img)
+        label = cat if conf >= MIN_CONF else "uncertain"
+        name = f"{int(time.time())}_{label}_{conf:.2f}.jpg"
+    else:  # only /cough gets here: /identify and /litterbox answer 503 first
+        cat = conf = label = None
+        name = f"{int(time.time())}_unknown.jpg"
     img.save(INBOX / name, quality=92)
     # After the response, so the Pi and the app never wait on the database.
     tasks.add_task(db.safe_write, "picture", {
@@ -145,7 +156,8 @@ def identify_photo(raw: bytes, tasks: BackgroundTasks, *, received: datetime, so
         msg = f"Litterbox visit: not sure which cat (best guess {cat}, {conf:.0%})."
     else:
         msg = f"**{label}** just used the litterbox ({conf:.0%} sure)."
-    result = {"cat": label, "best_guess": cat, "confidence": round(conf, 3), "saved_as": name}
+    result = {"cat": label, "best_guess": cat,
+              "confidence": round(conf, 3) if conf is not None else None, "saved_as": name}
     return result, img, msg
 
 
@@ -160,43 +172,85 @@ async def identify(tasks: BackgroundTasks, file: UploadFile = File(...), key: st
 
 
 @app.post("/litterbox")
-async def litterbox(tasks: BackgroundTasks, file: UploadFile = File(...), key: str = Form(""),
-                    user: str = Form("")):
+async def litterbox(tasks: BackgroundTasks, file: UploadFile | None = File(None),
+                    key: str = Form(""), user: str = Form(""), cat: str = Form(""),
+                    info: str = Form("")):
     """Same as /identify (same JSON, same saved photo), and also posts the result
-    and the photo to Discord. This is the one the Pi should call."""
+    and the photo to Discord. This is the one the Pi should call.
+    With `cat` (the app's Add litterbox sheet): a litterbox visit reported by hand, like
+    /cough: the event is recorded now, `file` and `info` are optional, see report_event()."""
     received = db.utcnow()
+    if cat:
+        check_key(key)
+        return report_event(
+            tasks, "litterbox_report", raw=await file.read() if file is not None else b"",
+            cat=cat, info=info, user=user, received=received, source="litterbox",
+            webhook=DISCORD_WEBHOOK, what="litterbox report",
+            text=lambda ts, note: f"**{cat}** used the litterbox at {ts} (reported from the app). "
+                                  f"Additional info: {note}")
     check_request(key)
+    if file is None:
+        raise HTTPException(400, "file is required (or send cat to report a visit by hand)")
     result, img, msg = identify_photo(await file.read(), tasks, received=received, source="litterbox", user=user)
     buf = io.BytesIO()
     img.save(buf, "JPEG", quality=85)
     post_discord(buf.getvalue(), msg)
     return result
 
+
 @app.post("/cough")
 async def cough(tasks: BackgroundTasks, cat: str = Form(""), key: str = Form(""),
-                info: str = Form(""), user: str = Form("")):
+                info: str = Form(""), user: str = Form(""),
+                file: UploadFile | None = File(None)):
     """Record a cough event (no event if `cat` isn't Litten or Shinx) and post it to the
-    cough Discord channel. Returns null when that webhook isn't set."""
+    cough Discord channel. Returns null when that webhook isn't set. Optional photo: see
+    report_event()."""
     received = db.utcnow()
     check_key(key)
-    tasks.add_task(db.safe_write, "cough", {"cat": cat, "user": user or None,
-                                            "notes": info.strip() or None,
-                                            "event_timestamp": received})
-    if not COUGH_DISCORD_WEBHOOK:
-        return
-    info = info.strip() or "No additional info."
+    return report_event(
+        tasks, "cough", raw=await file.read() if file is not None else b"", cat=cat,
+        info=info, user=user, received=received, source="identify",
+        webhook=COUGH_DISCORD_WEBHOOK, what="cough report",
+        text=lambda ts, note: f"**{cat}** just had cough attack at {ts}. Additional info: {note}")
+
+
+def report_event(tasks: BackgroundTasks, kind: str, *, raw: bytes, cat: str, info: str,
+                 user: str, received: datetime, source: str, webhook: str, what: str, text):
+    """An event reported from the app with the cat picked by hand (/cough, /litterbox with
+    `cat`). The db writer `kind` records it after the response (no event if `cat` isn't
+    Litten or Shinx). An optional photo (`raw`) is handled like /identify's (model guess if
+    the model is loaded, saved to inbox/ for labeling, `picture` row with `source`), linked
+    to the event, attached to the Discord post and returned as "photo". A file that isn't
+    an image gives 400 and nothing is recorded. Returns null when `webhook` isn't set.
+    `text(timestamp, note)` is the Discord message."""
+    photo = None
+    if raw:
+        photo, img, _ = identify_photo(raw, tasks, received=received, source=source, user=user)
+    # Added after the picture write, so the event can find its picture row.
+    tasks.add_task(db.safe_write, kind, {"cat": cat, "user": user or None,
+                                         "notes": info.strip() or None,
+                                         "event_timestamp": received,
+                                         "photo": photo["saved_as"] if photo else None})
+    if not webhook:
+        return None
     timestamp = received.astimezone(EDMONTON_TZ).strftime("%Y-%m-%d %H:%M:%S %Z")
-    msg = f"**{cat}** just had cough attack at {timestamp}. Additional info: {info}"
+    msg = text(timestamp, info.strip() or "No additional info.")
+    files = None
+    if photo:
+        buf = io.BytesIO()
+        img.save(buf, "JPEG", quality=85)
+        files = {"file": ("photo.jpg", buf.getvalue(), "image/jpeg")}
     try:
-        requests.post(
-            COUGH_DISCORD_WEBHOOK,
-            data={"content": msg},
-            timeout=15,
-        )
+        requests.post(webhook, data={"content": msg}, files=files, timeout=15)
     except requests.RequestException as e:
         print("discord post failed:", e)
-        return {"status": 500, "cat": cat, "message": f"Failed to send cough report to Discord: {e}", "timestamp": timestamp}
-    return {"status": 200, "cat": cat, "message": "Cough report sent to Discord."}
+        return {"status": 500, "cat": cat, "message": f"Failed to send {what} to Discord: {e}",
+                "timestamp": timestamp}
+    result = {"status": 200, "cat": cat, "message": f"{what.capitalize()} sent to Discord."}
+    if photo:
+        result["photo"] = photo
+    return result
+
 
 def class_names():
     names = sorted(p.name for p in DATA.iterdir() if p.is_dir()) if DATA.exists() else []

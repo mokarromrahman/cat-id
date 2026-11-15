@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../api.dart';
 import '../server_store.dart';
-import 'cough_screen.dart';
+import 'report_event_screen.dart';
 
 // Same colours as the label page (ui/label.css), the Cough form and the Vet tab.
 const _littenColor = Color(0xFFD62828);
@@ -61,7 +61,8 @@ String _rangeText(DateTime from, DateTime to) {
 
 /// The Events tab: litterbox visits and coughs, filtered by cat, event type and dates,
 /// with totals, a chart per event type (swipe between them) and the list. View only.
-/// "Add cough" opens the cough form (this tab replaced the Cough tab).
+/// "Add event" opens a menu (Litterbox / Cough), then that form (this tab replaced the
+/// Cough tab; the Identify tab's "Identify + send to Discord" moved here as Litterbox).
 class EventsScreen extends StatefulWidget {
   const EventsScreen({super.key, required this.store, required this.server});
 
@@ -173,7 +174,7 @@ class _EventsScreenState extends State<EventsScreen> {
     _load();
   }
 
-  Future<void> _addCough() async {
+  Future<void> _addEvent(ReportKind kind) async {
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -181,10 +182,10 @@ class _EventsScreenState extends State<EventsScreen> {
       showDragHandle: true,
       builder: (context) => FractionallySizedBox(
         heightFactor: 0.85,
-        child: CoughScreen(store: widget.store, server: widget.server),
+        child: ReportEventScreen(store: widget.store, server: widget.server, kind: kind),
       ),
     );
-    if (mounted) _load(); // show the cough that was just sent
+    if (mounted) _load(); // show the event that was just sent
   }
 
   void _openPhoto(CatEvent e) {
@@ -202,11 +203,26 @@ class _EventsScreenState extends State<EventsScreen> {
 
     return Scaffold(
       backgroundColor: Colors.transparent,
-      floatingActionButton: FloatingActionButton.extended(
-        heroTag: 'add-cough',
-        icon: const Icon(Icons.add),
-        label: const Text('Add cough'),
-        onPressed: _addCough,
+      floatingActionButton: MenuAnchor(
+        alignmentOffset: const Offset(0, 8),
+        menuChildren: [
+          MenuItemButton(
+            leadingIcon: const Icon(Icons.pets),
+            onPressed: () => _addEvent(ReportKind.litterbox),
+            child: const Text('Litterbox'),
+          ),
+          MenuItemButton(
+            leadingIcon: const Icon(Icons.sick_outlined),
+            onPressed: () => _addEvent(ReportKind.cough),
+            child: const Text('Cough'),
+          ),
+        ],
+        builder: (context, menu, _) => FloatingActionButton.extended(
+          heroTag: 'add-event',
+          icon: const Icon(Icons.add),
+          label: const Text('Add event'),
+          onPressed: () => menu.isOpen ? menu.close() : menu.open(),
+        ),
       ),
       body: RefreshIndicator(
         onRefresh: _load,

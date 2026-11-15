@@ -17,9 +17,11 @@ DateTime today() {
   return DateTime(n.year, n.month, n.day);
 }
 
-/// A fake server for /event_types and /events that records each request.
+/// A fake server for /event_types and /events that records each request, and accepts
+/// reports on /cough and /litterbox (their multipart bodies are kept in [reports]).
 class FakeServer {
   final requests = <Uri>[];
+  final reports = <String, String>{};
 
   /// Two pages of events: the first page has `next`, the second doesn't.
   Map<String, dynamic> event(int id, String type, String cat, {bool photo = false, String? notes}) => {
@@ -37,6 +39,10 @@ class FakeServer {
       };
 
   late final client = MockClient((req) async {
+    if (req.method == 'POST' && (req.url.path == '/cough' || req.url.path == '/litterbox')) {
+      reports[req.url.path] = req.body;
+      return _json({'status': 200, 'message': 'sent'});
+    }
     if (req.url.path == '/event_types') {
       requests.add(req.url);
       return _json([
@@ -235,12 +241,36 @@ void main() {
     }, () => server.client);
   });
 
-  testWidgets('Add cough opens the cough form', (tester) async {
+  testWidgets('Add event > Cough opens the cough form', (tester) async {
     final server = FakeServer();
     await http.runWithClient(() async {
       await _pump(tester, await _store());
-      await _tap(tester, find.text('Add cough'));
+      await _tap(tester, find.text('Add event'));
+      await _tap(tester, find.text('Cough').last); // the menu item, not the filter
       expect(find.text('Who coughed?'), findsOneWidget);
+    }, () => server.client);
+  });
+
+  testWidgets('Add event > Litterbox sends the cat, note and user to /litterbox',
+      (tester) async {
+    final server = FakeServer();
+    await http.runWithClient(() async {
+      await _pump(tester, await _store());
+      await _tap(tester, find.text('Add event'));
+      await _tap(tester, find.text('Litterbox').last); // the menu item, not the filter
+      expect(find.text('Who used the litterbox?'), findsOneWidget);
+      expect(find.text('Add photo'), findsNothing); // shown once a cat is picked
+      await _tap(tester, find.text('Litten').last);
+      expect(find.text('Add photo'), findsOneWidget);
+      await tester.enterText(find.byType(TextField), 'soft stool');
+      await _tap(tester, find.text('Send to Discord'));
+      final body = server.reports['/litterbox']!;
+      for (final field in [('cat', 'Litten'), ('info', 'soft stool'), ('user', 'Mac')]) {
+        expect(body, contains('name="${field.$1}"\r\n\r\n${field.$2}\r\n'));
+      }
+      expect(body, isNot(contains('name="file"'))); // no photo picked
+      expect(server.reports.containsKey('/cough'), isFalse);
+      expect(find.text('Sent to Discord for Litten'), findsOneWidget);
     }, () => server.client);
   });
 }

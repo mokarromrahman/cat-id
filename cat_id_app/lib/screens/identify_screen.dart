@@ -7,9 +7,9 @@ import '../api.dart';
 import '../camera_recovery.dart';
 import '../server_store.dart';
 
-/// Pick or take a photo, then ask the server who it is.
-///  - "Identify" calls /identify (JSON only).
-///  - "Identify + send to Discord" calls /litterbox (same, and posts to Discord).
+/// Pick or take a photo, then ask the server who it is ("Identify" calls /identify, JSON
+/// only, no Discord). Sending a litterbox visit to Discord is in the Events tab's
+/// Add event > Litterbox now.
 class IdentifyScreen extends StatefulWidget {
   const IdentifyScreen(
       {super.key, required this.store, required this.server, this.recoveredPhoto});
@@ -28,7 +28,6 @@ class _IdentifyScreenState extends State<IdentifyScreen> {
   XFile? _photo;
   bool _busy = false;
   IdentifyResult? _result;
-  bool _resultWentToDiscord = false;
   String? _error;
 
   @override
@@ -75,7 +74,7 @@ class _IdentifyScreenState extends State<IdentifyScreen> {
     }
   }
 
-  Future<void> _run({required bool discord}) async {
+  Future<void> _run() async {
     final photo = _photo;
     if (photo == null || _busy) return;
     setState(() {
@@ -86,11 +85,10 @@ class _IdentifyScreenState extends State<IdentifyScreen> {
     try {
       final key = await widget.store.keyFor(widget.server.id);
       final r = await CatApi(widget.server, key)
-          .identify(photo.path, sendToDiscord: discord);
+          .identify(photo.path, sendToDiscord: false);
       if (!mounted) return;
       setState(() {
         _result = r;
-        _resultWentToDiscord = discord;
       });
     } on ApiException catch (e) {
       if (!mounted) return;
@@ -147,34 +145,28 @@ class _IdentifyScreenState extends State<IdentifyScreen> {
         FilledButton.icon(
           icon: const Icon(Icons.search),
           label: const Text('Identify'),
-          onPressed: photo == null || _busy ? null : () => _run(discord: false),
-        ),
-        const SizedBox(height: 8),
-        FilledButton.tonalIcon(
-          icon: const Icon(Icons.send),
-          label: const Text('Identify + send to Discord'),
-          onPressed: photo == null || _busy ? null : () => _run(discord: true),
+          onPressed: photo == null || _busy ? null : _run,
         ),
         const SizedBox(height: 8),
         Text(
-          "Either way, the server keeps the photo in its inbox so you can label it later.",
+          "The server keeps the photo in its inbox so you can label it later. "
+          "To post a litterbox visit to Discord, use Events > Add event > Litterbox.",
           style: theme.textTheme.bodySmall,
           textAlign: TextAlign.center,
         ),
         const SizedBox(height: 16),
         if (_busy) const Center(child: CircularProgressIndicator()),
         if (_error != null) _ErrorCard(message: _error!),
-        if (_result != null) _ResultCard(result: _result!, discord: _resultWentToDiscord),
+        if (_result != null) _ResultCard(result: _result!),
       ],
     );
   }
 }
 
 class _ResultCard extends StatelessWidget {
-  const _ResultCard({required this.result, required this.discord});
+  const _ResultCard({required this.result});
 
   final IdentifyResult result;
-  final bool discord;
 
   @override
   Widget build(BuildContext context) {
@@ -205,7 +197,6 @@ class _ResultCard extends StatelessWidget {
             const SizedBox(height: 12),
             LinearProgressIndicator(value: result.confidence),
             const SizedBox(height: 12),
-            Text(discord ? 'Also posted to Discord.' : 'Not posted to Discord.'),
             Text('Saved as ${result.savedAs}', style: theme.textTheme.bodySmall),
           ],
         ),

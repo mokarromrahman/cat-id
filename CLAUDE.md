@@ -45,10 +45,17 @@ Not in git: `data/`, `inbox/`, `model.joblib`, `embeddings_cache.npz`, `hf_cache
   No Discord. Below `MIN_CONF` (0.75) the `cat` is `"uncertain"`. Records a `picture` row
   (source `identify`) after the response.
 - `POST /litterbox`: same as `/identify` (photo saved once, source `litterbox`), plus posts to
-  `DISCORD_WEBHOOK_URL`. This is what the Pi calls.
-- `POST /cough` (form `cat`, `key`, optional `info`, `user`): records a cough event, posts a
+  `DISCORD_WEBHOOK_URL`. This is what the Pi calls. With form `cat` (plus optional `info`,
+  `file`) it's a visit reported by hand from the app: handled like `/cough` (shared
+  `report_event()`; db writer `litterbox_report`), the event is recorded now, photo source
+  `litterbox`, posted to `DISCORD_WEBHOOK_URL`, `null` if that isn't set. No `cat` and no
+  `file` gives 400.
+- `POST /cough` (form `cat`, `key`, optional `info`, `user`, `file`): records a cough event, posts a
   text report to `COUGH_DISCORD_WEBHOOK_URL`. Returns `null` (200) if that webhook isn't set
-  (the event is still recorded). Checks the key but not the model.
+  (the event is still recorded). Checks the key but not the model. An optional photo is
+  handled like `/identify`'s (model guess if the model is loaded, saved to `inbox/` for
+  labeling, `picture` row with source `identify`), linked by `event.picture_id`, attached to
+  the Discord post and returned as `photo`. Not an image: 400 and nothing is recorded.
 - `GET|POST /vet_visit`, `PATCH|DELETE /vet_visit/{id}`, `POST /vet_visit/{id}/restore`: see
   `vet_api.py`. Key in the `X-API-Key` header. Need the DB: 503 if it's down.
 - `GET /events` (`cat`, `type`, `from`, `to` as Edmonton days, `limit`, `before` cursor),
@@ -89,12 +96,17 @@ Not in git: `data/`, `inbox/`, `model.joblib`, `embeddings_cache.npz`, `hf_cache
   `model_version`). A crop is its own row with `parent_picture_id`. Original filenames are
   unique; crop filenames aren't (same crop name can exist in two cat folders). Deleted photos
   keep their row.
-- `event`: always a real cat. Litterbox-type events come only from labeling on `/label`: a
-  Litten/Shinx label (plain or crop) with an event type. The picker defaults to `litterbox` for
+- `event`: always a real cat. Litterbox-type events come from labeling on `/label` (a
+  Litten/Shinx label, plain or crop, with an event type) or from a hand report
+  (`/litterbox` with `cat`). The picker defaults to `litterbox` for
   `/litterbox` photos and None otherwise; `event_type` missing means that default, `"none"`
   means no event. Never two events for the same original photo, cat and type. Undo deletes the
-  event its action created (the only hard delete of events). Coughs from `/cough` create an
-  event directly (no picture; unknown cat name -> no event). Cats/users with events can't be
+  event its action created (the only hard delete of events): for a whole photo, only events
+  with `created_on >= labeled_on` (`labeled_on` is set with the DB's `now()` for this), so a
+  cough linked to the photo survives undo. `event.picture_id` is unique, so labeling a photo
+  that already has an event (a cough photo) makes no new one; crops still can. Coughs from `/cough` and hand-reported
+  litterbox visits create an event directly (picture only if a photo was sent; unknown cat
+  name -> no event). Cats/users with events can't be
   deleted.
 - `vet_visit`: `cat_id` nullable (pickups), `visit_date` (date), `appointment_time` (time,
   Edmonton clock), `doctor`, `clinic` (default `unknown`), `notes`, `reason` text[] (checkup,
@@ -125,7 +137,11 @@ Not in git: `data/`, `inbox/`, `model.joblib`, `embeddings_cache.npz`, `hf_cache
 
 Flutter, Android only, sideloaded (not on the Play Store). Tabs, in `kTabOrder` in
 `lib/screens/home_screen.dart`: Health, Identify, Events, Vet, Label. Cough has no tab: the
-Events tab's Add cough button opens `CoughScreen` in a sheet.
+Events tab's Add event menu (Litterbox / Cough) opens `ReportEventScreen`
+(`screens/report_event_screen.dart`, `ReportKind`) in a sheet: cat, note, optional photo
+from gallery or camera, "Send to Discord" (a camera photo lost to Android closing the app
+comes back on Identify). The Identify tab only identifies (no Discord button; that moved
+to Add event > Litterbox).
 
 - Up to 5 servers saved (`server_store.dart`, SharedPreferences); each server's API key in
   `flutter_secure_storage` (Android Keystore). Plain http on the home network.
@@ -147,8 +163,8 @@ Events tab's Add cough button opens `CoughScreen` in a sheet.
   today, time optional, clinic pre-filled "Millwoods East Veterinary Clinic"; reasons, weight,
   cost, follow-up and notes per cat) and the visit list with edit, delete, "Show deleted" and
   restore. No offline caching: if the server can't be reached it shows the error.
-- `api.dart`: `health()`, `identify(path, sendToDiscord:)` (`/identify` or `/litterbox`),
-  `cough(cat, info)`, `vetVisits`, `addVetVisits`, `editVetVisit`, `deleteVetVisit`,
+- `api.dart`: `health()`, `identify(path, sendToDiscord:)` (`/identify` or `/litterbox`; the app now only
+  uses `/identify`), `cough(cat, info, photoPath:)`, `litterbox(cat, info, photoPath:)`, `vetVisits`, `addVetVisits`, `editVetVisit`, `deleteVetVisit`,
   `restoreVetVisit`, `eventTypes`, `events`, `pictureUri`, `retrain()`.
 - Tests: `flutter test` (`test/vet_screen_test.dart` and `test/events_screen_test.dart` drive
   the Vet and Events tabs against a fake server).
@@ -194,14 +210,6 @@ server). `.env` with test values (`POSTGRES_PASSWORD`, `API_KEY=test`, empty Dis
   - `label.py` / `sorter_core.py` without a database (must also pass on the Mac's Python 3.9).
   - Later: the Events tab's date logic (midnight in Edmonton, daylight-saving days) goes here
     too. Running tests automatically on every commit (e.g. GitHub Actions) is a separate step.
-
-- **Photo on a cough (deferred by the owner, 2026-11-13).** An optional photo in the Add cough
-  sheet (camera or gallery via `image_picker`), shown on the cough event like litterbox photos.
-  Proposed, not agreed: `/cough` takes an optional `file`; saved under `inbox/_cough/` (on the
-  mounted disk, not listed by `/label`); a `picture` row with a new `source` value `cough`
-  (migration widening `picture_source_allowed`) linked by `event.picture_id`; no model guess;
-  photo posted to the cough Discord channel. Owner still to decide: storage folder or the label
-  queue, the new source value, model guess yes/no, Discord yes/no.
 
 - Alerts: no litterbox visit from a cat in 24 h+, unusual frequency; weekly Discord summary
   (would read `picture`, so they don't depend on how fast photos are labeled).

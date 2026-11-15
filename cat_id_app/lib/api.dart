@@ -236,15 +236,32 @@ class CatApi {
 
   /// POST /cough: the server records a cough event and posts it to its Discord channel.
   /// [info] is optional; the server fills in "No additional info." when it is left out.
-  Future<void> cough(String cat, String info) async {
+  /// [photoPath] is optional: the server keeps the photo (inbox, for labeling), links it to
+  /// the event and attaches it to the Discord post.
+  Future<void> cough(String cat, String info, {String? photoPath}) =>
+      _report('/cough', cat, info, photoPath, 'cough');
+
+  /// POST /litterbox with `cat`: a litterbox visit reported by hand. Same as [cough]: the
+  /// server records the event now and posts it to the litterbox Discord channel.
+  Future<void> litterbox(String cat, String info, {String? photoPath}) =>
+      _report('/litterbox', cat, info, photoPath, 'litterbox');
+
+  Future<void> _report(
+      String path, String cat, String info, String? photoPath, String what) async {
     final r = await _guard(() async {
-      final req = http.MultipartRequest('POST', _uri('/cough'))
+      final req = http.MultipartRequest('POST', _uri(path))
         ..fields['cat'] = cat
         ..fields['key'] = apiKey;
       if (info.trim().isNotEmpty) req.fields['info'] = info.trim();
       final user = _user;
       if (user != null) req.fields['user'] = user;
-      final streamed = await req.send().timeout(const Duration(seconds: 30));
+      if (photoPath != null) {
+        req.files.add(await http.MultipartFile.fromPath('file', photoPath));
+      }
+      // A photo goes through the model on the server, like identify().
+      final streamed = await req
+          .send()
+          .timeout(Duration(seconds: photoPath == null ? 30 : 90));
       return http.Response.fromStream(streamed);
     });
     if (r.statusCode == 200) {
@@ -255,9 +272,9 @@ class CatApi {
         body = null;
       }
       if (body is Map) return;
-      // The server answers 200 with nothing when COUGH_DISCORD_WEBHOOK isn't set.
+      // The server answers 200 with nothing when that Discord webhook isn't set.
       throw ApiException(
-          'The cough was saved, but the server has no cough Discord webhook set, so nothing was posted.');
+          'The $what was saved, but the server has no $what Discord webhook set, so nothing was posted.');
     }
     _json(r); // not 200: throws the matching error
   }

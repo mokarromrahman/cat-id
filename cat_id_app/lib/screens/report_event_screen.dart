@@ -1,31 +1,51 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../api.dart';
+import '../camera_recovery.dart';
 import '../server_store.dart';
 
 // Same colours as the label page (ui/label.css).
 const _littenColor = Color(0xFFD62828);
 const _shinxColor = Color(0xFFF4C20D);
 
-/// Report a cough: choose Litten or Shinx, add a note if you like, and the server posts
-/// it to Discord (POST /cough). The pictures are the same img_src/ files the label pages
-/// use, loaded from the server's /asset/ route, so there is only one copy of them.
-class CoughScreen extends StatefulWidget {
-  const CoughScreen({super.key, required this.store, required this.server});
+/// What the sheet reports: a cough (POST /cough) or a litterbox visit (POST /litterbox
+/// with `cat`).
+enum ReportKind {
+  cough('Who coughed?', 'e.g. after eating, lasted about 10 seconds'),
+  litterbox('Who used the litterbox?', 'e.g. pee and poop, soft stool');
+
+  const ReportKind(this.question, this.hint);
+  final String question;
+  final String hint;
+}
+
+/// Report an event by hand (the Events tab's Add event menu): choose Litten or Shinx, add
+/// a note and a photo if you like, and the server records the event and posts it to
+/// Discord. The photo also goes to the server's label queue and shows on the event in the
+/// Events tab. The cat pictures are the same img_src/ files the label pages use, loaded
+/// from the server's /asset/ route, so there is only one copy of them.
+class ReportEventScreen extends StatefulWidget {
+  const ReportEventScreen(
+      {super.key, required this.store, required this.server, required this.kind});
 
   final ServerStore store;
   final Server server;
+  final ReportKind kind;
 
   @override
-  State<CoughScreen> createState() => _CoughScreenState();
+  State<ReportEventScreen> createState() => _ReportEventScreenState();
 }
 
-class _CoughScreenState extends State<CoughScreen> {
+class _ReportEventScreenState extends State<ReportEventScreen> {
   final _info = TextEditingController();
   String? _cat;
   bool _busy = false;
   String? _error;
   String? _sentFor;
+  XFile? _photo;
 
   @override
   void dispose() {
@@ -45,6 +65,27 @@ class _CoughScreenState extends State<CoughScreen> {
     });
   }
 
+  Future<void> _pick(ImageSource source) async {
+    try {
+      // If Android closes the app while the camera is open, the photo comes back on the
+      // Identify tab (camera_recovery.dart) rather than being lost.
+      if (source == ImageSource.camera) await CameraRecovery.markOpened();
+      final f = await ImagePicker()
+          .pickImage(source: source, maxWidth: 1600, imageQuality: 90);
+      if (source == ImageSource.camera) await CameraRecovery.markReturned();
+      if (f == null || !mounted) return; // cancelled
+      setState(() {
+        _photo = f;
+        _error = null;
+        _sentFor = null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error =
+          'Could not open the ${source == ImageSource.camera ? 'camera' : 'gallery'}: $e');
+    }
+  }
+
   Future<void> _send() async {
     final cat = _cat;
     if (cat == null || _busy) return;
@@ -55,12 +96,20 @@ class _CoughScreenState extends State<CoughScreen> {
     });
     try {
       final key = await widget.store.keyFor(widget.server.id);
-      await CatApi(widget.server, key).cough(cat, _info.text);
+      final api = CatApi(widget.server, key);
+      final photo = _photo?.path;
+      switch (widget.kind) {
+        case ReportKind.cough:
+          await api.cough(cat, _info.text, photoPath: photo);
+        case ReportKind.litterbox:
+          await api.litterbox(cat, _info.text, photoPath: photo);
+      }
       if (!mounted) return;
       setState(() {
         _sentFor = cat;
         _cat = null; // ready for the next report
         _info.clear();
+        _photo = null;
       });
     } on ApiException catch (e) {
       if (!mounted) return;
@@ -73,6 +122,61 @@ class _CoughScreenState extends State<CoughScreen> {
     }
   }
 
+  /// Optional photo: Gallery / Camera buttons, then a preview with a remove button.
+  Widget _photoSection(ThemeData theme) {
+    final photo = _photo;
+    final buttons = Row(
+      children: [
+        Expanded(
+          child: OutlinedButton.icon(
+            icon: const Icon(Icons.photo_library_outlined),
+            label: Text(photo == null ? 'Add photo' : 'Change photo'),
+            onPressed: _busy ? null : () => _pick(ImageSource.gallery),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: OutlinedButton.icon(
+            icon: const Icon(Icons.photo_camera_outlined),
+            label: const Text('Camera'),
+            onPressed: _busy ? null : () => _pick(ImageSource.camera),
+          ),
+        ),
+      ],
+    );
+    if (photo == null) return buttons;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Stack(
+          children: [
+            Container(
+              height: 200,
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              clipBehavior: Clip.antiAlias,
+              alignment: Alignment.center,
+              child: Image.file(File(photo.path), fit: BoxFit.contain),
+            ),
+            Positioned(
+              top: 4,
+              right: 4,
+              child: IconButton.filledTonal(
+                tooltip: 'Remove photo',
+                icon: const Icon(Icons.close),
+                onPressed: _busy ? null : () => setState(() => _photo = null),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        buttons,
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -81,7 +185,7 @@ class _CoughScreenState extends State<CoughScreen> {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        Text('Who coughed?', style: theme.textTheme.titleMedium),
+        Text(widget.kind.question, style: theme.textTheme.titleMedium),
         const SizedBox(height: 12),
         Row(
           children: [
@@ -116,12 +220,14 @@ class _CoughScreenState extends State<CoughScreen> {
             minLines: 3,
             maxLines: 6,
             textCapitalization: TextCapitalization.sentences,
-            decoration: const InputDecoration(
+            decoration: InputDecoration(
               labelText: 'Additional info (optional)',
-              hintText: 'e.g. after eating, lasted about 10 seconds',
-              border: OutlineInputBorder(),
+              hintText: widget.kind.hint,
+              border: const OutlineInputBorder(),
             ),
           ),
+          const SizedBox(height: 16),
+          _photoSection(theme),
         ],
         const SizedBox(height: 16),
         FilledButton.icon(
