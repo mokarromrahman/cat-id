@@ -194,8 +194,10 @@ class _ServerDialogState extends State<_ServerDialog> {
               autocorrect: false,
               keyboardType: TextInputType.url,
               decoration: const InputDecoration(
-                labelText: 'IP address',
+                labelText: 'Address',
                 hintText: '192.168.1.116 (port 8000 if left out)',
+                helperText: 'Away from home: https://cat-id.<tailnet>.ts.net (needs Tailscale on)',
+                helperMaxLines: 2,
               ),
             ),
             TextField(
