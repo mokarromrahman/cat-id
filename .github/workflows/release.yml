@@ -69,7 +69,7 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
       - uses: docker/build-push-action@v6
         with:
           context: .
@@ -91,6 +91,7 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
           body: |
             Server image: `ghcr.io/${{ github.repository }}:${{ github.ref_name }}` (without the `v`)
             Android APK: attached below once the "Build APK" workflow has been run for this tag.

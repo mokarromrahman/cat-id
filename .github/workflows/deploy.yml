@@ -32,7 +32,7 @@ jobs:
     steps:
       - name: Check inputs
         run: |
-          [[ "${{ inputs.tag }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Tag must look like v1.2.3"; exit 1; }
+          [[ "${{ inputs.tag }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "::error::Tag must look like v1.2.3 or v1.2.3-name"; exit 1; }
           [ -n "$DEPLOY_DIR" ] && [ -f "$DEPLOY_DIR/.env" ] || { echo "::error::Set the DEPLOY_DIR repo variable to the folder with .env"; exit 1; }
 
       # The tag's docker-compose.yml, so compose changes ship with the version.
