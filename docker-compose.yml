@@ -3,7 +3,13 @@ services:
     # The server pulls a released version (deploy.yml sets CAT_ID_TAG, e.g. 0.2.0).
     # `docker compose up --build` still builds locally (on the Mac) as before.
     image: ghcr.io/mokarromrahman/cat-id:${CAT_ID_TAG:-latest}
-    build: .
+    build:
+      context: .
+      # Shown by GET /health. Local builds say "dev"; to stamp a commit:
+      #   CAT_ID_COMMIT=$(git rev-parse HEAD) docker compose up -d --build
+      args:
+        CAT_ID_VERSION: "${CAT_ID_VERSION:-dev}"
+        CAT_ID_COMMIT: "${CAT_ID_COMMIT:-}"
     restart: unless-stopped
     ports:
       - "8000:8000"

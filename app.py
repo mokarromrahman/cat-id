@@ -18,12 +18,14 @@ GET  /events     events (filter by cat, type, date range), totals and chart data
                  event's photo. See events_api.py.
 POST /api/retrain  re-run training on data/ and hot-reload the model
 GET  /health     is the model loaded, which classes it knows, how many training
-                 photos each class has in data/ (the same ones train.py reads), and
-                 how many captures are waiting to be sorted in inbox/ (the "N left"
-                 on /label):
+                 photos each class has in data/ (the same ones train.py reads), how
+                 many captures are waiting to be sorted in inbox/ (the "N left"
+                 on /label), and which server build this is (the release tag and full
+                 commit hash; "dev" and null for a local build):
                  {"model_loaded": true, "classes": ["Litten", "Shinx", "neither"],
                   "photos": {"Litten": 912, "Shinx": 703, "neither": 42},
-                  "waiting_in_inbox": 17}
+                  "waiting_in_inbox": 17, "version": "v0.2.0",
+                  "commit": "433c253..."}
 
 `user` everywhere is a name from app_user (pi, Ashley, Mac); missing or unknown means the
 system user. Database writes never fail a request: if Postgres is down they go to
@@ -59,7 +61,11 @@ COUGH_DISCORD_WEBHOOK = os.environ.get("COUGH_DISCORD_WEBHOOK_URL", "")
 PHOTO_EXTS = {".jpg", ".jpeg", ".png", ".webp"}  # same as train.py
 MIN_CONF = float(os.environ.get("MIN_CONF", "0.75"))
 API_KEY = os.environ.get("API_KEY", "")  # optional shared secret for /identify
-EDMONTON_TZ = ZoneInfo("America/Edmonton") 
+EDMONTON_TZ = ZoneInfo("America/Edmonton")
+# Which build this is (set in the Dockerfile from build args; release.yml passes the tag and
+# commit). "dev" / None for a local build.
+SERVER_VERSION = os.environ.get("CAT_ID_VERSION") or "dev"
+SERVER_COMMIT = os.environ.get("CAT_ID_COMMIT") or None
 
 INBOX.mkdir(exist_ok=True)
 app = FastAPI(title="cat-id")
@@ -326,4 +332,6 @@ def health():
         "classes": bundle["classes"] if bundle else [],
         "photos": photos,
         "waiting_in_inbox": sorter.remaining(),
+        "version": SERVER_VERSION,
+        "commit": SERVER_COMMIT,
     }

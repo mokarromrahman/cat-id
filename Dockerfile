@@ -12,6 +12,13 @@ COPY embed.py train.py app.py sorter_core.py db.py vet_api.py events_api.py star
 COPY migrations ./migrations
 COPY ui ./ui
 COPY img_src ./img_src
+# Which version this image is, shown by GET /health. release.yml passes the tag (v0.2.0) and
+# the full commit hash; a local `docker compose build` gives "dev" unless CAT_ID_VERSION /
+# CAT_ID_COMMIT are set (see docker-compose.yml). Kept last, so a new version doesn't
+# invalidate the cached layers above.
+ARG CAT_ID_VERSION=dev
+ARG CAT_ID_COMMIT=
+ENV CAT_ID_VERSION=$CAT_ID_VERSION CAT_ID_COMMIT=$CAT_ID_COMMIT
 EXPOSE 8000
 # start.py waits up to 30 s for Postgres, runs the migrations, then starts uvicorn either way.
 CMD ["python", "start.py"]

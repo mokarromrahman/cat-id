@@ -3,8 +3,21 @@ import 'package:flutter/material.dart';
 import '../api.dart';
 import '../server_store.dart';
 
+/// The "Server version" card's (title, detail) from GET /health's `version` (the release
+/// tag, or "dev" for a local build) and `commit` (full hash; shown shortened).
+(String, String) serverVersionText(Map<String, dynamic> health) {
+  final version = health['version'] as String?;
+  final commit = health['commit'] as String?;
+  final short = commit == null || commit.isEmpty ? null : commit.substring(0, commit.length < 7 ? commit.length : 7);
+  if (version == null) {
+    return ('Server version unknown', 'This server is older than the version display. Update it to see its version.');
+  }
+  final title = version == 'dev' ? 'Server: local build' : 'Server $version';
+  return (title, short == null ? 'No commit recorded' : 'Commit $short');
+}
+
 /// GET /health: model status, training photos per class, captures waiting in the
-/// inbox. Also the Retrain button (POST /api/retrain).
+/// inbox, and which server build this is. Also the Retrain button (POST /api/retrain).
 class HealthScreen extends StatefulWidget {
   const HealthScreen({super.key, required this.server, required this.onOpenLabel});
 
@@ -131,6 +144,7 @@ class _HealthScreenState extends State<HealthScreen> {
         .map((k, v) => MapEntry(k as String, (v as num).toInt()));
     final waiting = (data['waiting_in_inbox'] as num?)?.toInt() ?? 0;
     final total = photos.values.fold<int>(0, (a, b) => a + b);
+    final (versionTitle, versionDetail) = serverVersionText(data);
 
     return [
       Card(
@@ -185,6 +199,13 @@ class _HealthScreenState extends State<HealthScreen> {
           trailing: waiting > 0
               ? TextButton(onPressed: widget.onOpenLabel, child: const Text('Sort'))
               : null,
+        ),
+      ),
+      Card(
+        child: ListTile(
+          leading: const Icon(Icons.dns_outlined),
+          title: Text(versionTitle),
+          subtitle: Text(versionDetail),
         ),
       ),
       const SizedBox(height: 8),

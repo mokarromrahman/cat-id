@@ -76,6 +76,10 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # Stamped into the image and shown by GET /health (and the app's Health tab).
+          build-args: |
+            CAT_ID_VERSION=${{ github.ref_name }}
+            CAT_ID_COMMIT=${{ github.sha }}
           # Reuse the big torch layer between releases when requirements.txt hasn't changed.
           cache-from: type=gha
           cache-to: type=gha,mode=max

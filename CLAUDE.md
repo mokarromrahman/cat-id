@@ -55,7 +55,11 @@ Not in git: `data/`, `inbox/`, `model.joblib`, `embeddings_cache.npz`, `hf_cache
   `GET /event_types`, `GET /picture/{id}/image` (serves only files under `data/` or `inbox/`):
   see `events_api.py`. View only. Key in `X-API-Key`; 503 if the DB is down. Totals and chart
   data cover the whole filtered range and come with the first page only.
-- `GET /health`: `{model_loaded, classes, photos: {class: count}, waiting_in_inbox}`.
+- `GET /health`: `{model_loaded, classes, photos: {class: count}, waiting_in_inbox, version,
+  commit}`. `version`/`commit` come from the `CAT_ID_VERSION`/`CAT_ID_COMMIT` build args baked
+  into the image (`release.yml` passes the tag and `github.sha`); a local build says `dev` and
+  `null` unless you run `CAT_ID_COMMIT=$(git rev-parse HEAD) docker compose up -d --build`.
+  The app's Health tab shows them ("Server v0.2.0", "Commit 433c253").
 - `GET /label` (optional `?user=`) plus `/ui/*`, `/asset/*`, `/img/*`, `GET /api/config|state|log`,
   `POST /api/{label,crop,archive,undo,keep,delete}`, `POST /api/retrain`. `/api/config` adds
   `event_types`; `/api/state` adds `sources` for the queue.
