@@ -199,7 +199,7 @@ class _ReportEventScreenState extends State<ReportEventScreen> {
           sent = '${_locationLabel(cleaned)} cleaning saved'
               '${_bagChanged ? ' (bag changed)' : ''}';
       }
-      widget.onSent?.call(cat);
+      if (cat != null) widget.onSent?.call(cat); // cleanings aren't for a cat
       if (!mounted) return;
       setState(() {
         _sent = sent;

@@ -102,3 +102,10 @@ jobs:
     with:
       tag: ${{ github.ref_name }}
     secrets: inherit
+
+  deploy:
+    needs: release
+    uses: ./.github/workflows/deploy.yml
+    with:
+      tag: ${{ github.ref_name }}
+    secrets: inherit
