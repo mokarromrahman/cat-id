@@ -262,15 +262,47 @@ void main() {
       expect(find.text('Add photo'), findsNothing); // shown once a cat is picked
       await _tap(tester, find.text('Litten').last);
       expect(find.text('Add photo'), findsOneWidget);
+      expect(find.text('Now'), findsOneWidget); // When defaults to now
       await tester.enterText(find.byType(TextField), 'soft stool');
+      final before = DateTime.now().toUtc();
       await _tap(tester, find.text('Send to Discord'));
       final body = server.reports['/litterbox']!;
+      final sentTime = RegExp(r'name="event_time"\r\n\r\n([^\r]+)\r\n').firstMatch(body)!.group(1)!;
+      expect(sentTime, endsWith('Z')); // UTC
+      final sent = DateTime.parse(sentTime);
+      expect(sent.difference(before).inSeconds.abs(), lessThan(5));
       for (final field in [('cat', 'Litten'), ('info', 'soft stool'), ('user', 'Mac')]) {
         expect(body, contains('name="${field.$1}"\r\n\r\n${field.$2}\r\n'));
       }
       expect(body, isNot(contains('name="file"'))); // no photo picked
       expect(server.reports.containsKey('/cough'), isFalse);
       expect(find.text('Sent to Discord for Litten'), findsOneWidget);
+    }, () => server.client);
+  });
+
+  testWidgets('Add event > Cough: an earlier date and time picked under When is sent',
+      (tester) async {
+    final server = FakeServer();
+    await http.runWithClient(() async {
+      await _pump(tester, await _store());
+      await _tap(tester, find.text('Add event'));
+      await _tap(tester, find.text('Cough').last);
+      await _tap(tester, find.text('Shinx').last);
+      await _tap(tester, find.text('When'));
+      // Date picker: type the date (two days ago), then keep the time picker's time.
+      final day = today().subtract(const Duration(days: 2));
+      await _tap(tester, find.byIcon(Icons.edit_outlined));
+      final typed = '${day.month.toString().padLeft(2, '0')}/'
+          '${day.day.toString().padLeft(2, '0')}/${day.year}';
+      await tester.enterText(find.byType(TextField).last, typed);
+      await _tap(tester, find.text('OK'));
+      await _tap(tester, find.text('OK'));
+      expect(find.text('Now'), findsOneWidget); // the reset button is shown now
+      await _tap(tester, find.text('Send to Discord'));
+      final body = server.reports['/cough']!;
+      final sentTime = RegExp(r'name="event_time"\r\n\r\n([^\r]+)\r\n').firstMatch(body)!.group(1)!;
+      final sent = DateTime.parse(sentTime).toLocal();
+      expect((sent.year, sent.month, sent.day), (day.year, day.month, day.day));
     }, () => server.client);
   });
 }

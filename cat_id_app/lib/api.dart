@@ -237,22 +237,24 @@ class CatApi {
   /// POST /cough: the server records a cough event and posts it to its Discord channel.
   /// [info] is optional; the server fills in "No additional info." when it is left out.
   /// [photoPath] is optional: the server keeps the photo (inbox, for labeling), links it to
-  /// the event and attaches it to the Discord post.
-  Future<void> cough(String cat, String info, {String? photoPath}) =>
-      _report('/cough', cat, info, photoPath, 'cough');
+  /// the event and attaches it to the Discord post. [when] is when it happened (sent as
+  /// `event_time` in UTC; the server uses it as the event's time); null means now.
+  Future<void> cough(String cat, String info, {String? photoPath, DateTime? when}) =>
+      _report('/cough', cat, info, photoPath, when, 'cough');
 
   /// POST /litterbox with `cat`: a litterbox visit reported by hand. Same as [cough]: the
   /// server records the event now and posts it to the litterbox Discord channel.
-  Future<void> litterbox(String cat, String info, {String? photoPath}) =>
-      _report('/litterbox', cat, info, photoPath, 'litterbox');
+  Future<void> litterbox(String cat, String info, {String? photoPath, DateTime? when}) =>
+      _report('/litterbox', cat, info, photoPath, when, 'litterbox');
 
-  Future<void> _report(
-      String path, String cat, String info, String? photoPath, String what) async {
+  Future<void> _report(String path, String cat, String info, String? photoPath,
+      DateTime? when, String what) async {
     final r = await _guard(() async {
       final req = http.MultipartRequest('POST', _uri(path))
         ..fields['cat'] = cat
         ..fields['key'] = apiKey;
       if (info.trim().isNotEmpty) req.fields['info'] = info.trim();
+      req.fields['event_time'] = (when ?? DateTime.now()).toUtc().toIso8601String();
       final user = _user;
       if (user != null) req.fields['user'] = user;
       if (photoPath != null) {

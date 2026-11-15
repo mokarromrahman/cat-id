@@ -46,7 +46,7 @@ Not in git: `data/`, `inbox/`, `model.joblib`, `embeddings_cache.npz`, `hf_cache
   (source `identify`) after the response.
 - `POST /litterbox`: same as `/identify` (photo saved once, source `litterbox`), plus posts to
   `DISCORD_WEBHOOK_URL`. This is what the Pi calls. With form `cat` (plus optional `info`,
-  `file`) it's a visit reported by hand from the app: handled like `/cough` (shared
+  `file`, `event_time`) it's a visit reported by hand from the app: handled like `/cough` (shared
   `report_event()`; db writer `litterbox_report`), the event is recorded now, photo source
   `litterbox`, posted to `DISCORD_WEBHOOK_URL`, `null` if that isn't set. No `cat` and no
   `file` gives 400.
@@ -56,6 +56,10 @@ Not in git: `data/`, `inbox/`, `model.joblib`, `embeddings_cache.npz`, `hf_cache
   handled like `/identify`'s (model guess if the model is loaded, saved to `inbox/` for
   labeling, `picture` row with source `identify`), linked by `event.picture_id`, attached to
   the Discord post and returned as `photo`. Not an image: 400 and nothing is recorded.
+  Optional `event_time` (ISO 8601 with a UTC offset; the app sends UTC): becomes the event's
+  `event_timestamp` (missing = arrival time; future beyond 5 min of clock slack, no offset or
+  unreadable: 400, nothing saved). The photo's `picture.event_timestamp` keeps the arrival
+  time. Discord shows the event time, plus "(reported ...)" when it's over 5 min earlier.
 - `GET|POST /vet_visit`, `PATCH|DELETE /vet_visit/{id}`, `POST /vet_visit/{id}/restore`: see
   `vet_api.py`. Key in the `X-API-Key` header. Need the DB: 503 if it's down.
 - `GET /events` (`cat`, `type`, `from`, `to` as Edmonton days, `limit`, `before` cursor),
@@ -138,7 +142,9 @@ Not in git: `data/`, `inbox/`, `model.joblib`, `embeddings_cache.npz`, `hf_cache
 Flutter, Android only, sideloaded (not on the Play Store). Tabs, in `kTabOrder` in
 `lib/screens/home_screen.dart`: Health, Identify, Events, Vet, Label. Cough has no tab: the
 Events tab's Add event menu (Litterbox / Cough) opens `ReportEventScreen`
-(`screens/report_event_screen.dart`, `ReportKind`) in a sheet: cat, note, optional photo
+(`screens/report_event_screen.dart`, `ReportKind`) in a sheet: cat, When (date then time
+picker; default "Now", any past date, not the future; sent as `event_time` in UTC), note,
+optional photo
 from gallery or camera, "Send to Discord" (a camera photo lost to Android closing the app
 comes back on Identify). The Identify tab only identifies (no Discord button; that moved
 to Add event > Litterbox).
@@ -164,7 +170,7 @@ to Add event > Litterbox).
   cost, follow-up and notes per cat) and the visit list with edit, delete, "Show deleted" and
   restore. No offline caching: if the server can't be reached it shows the error.
 - `api.dart`: `health()`, `identify(path, sendToDiscord:)` (`/identify` or `/litterbox`; the app now only
-  uses `/identify`), `cough(cat, info, photoPath:)`, `litterbox(cat, info, photoPath:)`, `vetVisits`, `addVetVisits`, `editVetVisit`, `deleteVetVisit`,
+  uses `/identify`), `cough(cat, info, photoPath:, when:)`, `litterbox(cat, info, photoPath:, when:)`, `vetVisits`, `addVetVisits`, `editVetVisit`, `deleteVetVisit`,
   `restoreVetVisit`, `eventTypes`, `events`, `pictureUri`, `retrain()`.
 - Tests: `flutter test` (`test/vet_screen_test.dart` and `test/events_screen_test.dart` drive
   the Vet and Events tabs against a fake server).

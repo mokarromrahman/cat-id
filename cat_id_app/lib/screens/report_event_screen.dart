@@ -22,8 +22,9 @@ enum ReportKind {
   final String hint;
 }
 
-/// Report an event by hand (the Events tab's Add event menu): choose Litten or Shinx, add
-/// a note and a photo if you like, and the server records the event and posts it to
+/// Report an event by hand (the Events tab's Add event menu): choose Litten or Shinx, set
+/// when it happened (default now; any past date and time), add a note and a photo if you
+/// like, and the server records the event and posts it to
 /// Discord. The photo also goes to the server's label queue and shows on the event in the
 /// Events tab. The cat pictures are the same img_src/ files the label pages use, loaded
 /// from the server's /asset/ route, so there is only one copy of them.
@@ -46,6 +47,9 @@ class _ReportEventScreenState extends State<ReportEventScreen> {
   String? _error;
   String? _sentFor;
   XFile? _photo;
+
+  /// When it happened; null = now (the moment Send is tapped).
+  DateTime? _when;
 
   @override
   void dispose() {
@@ -86,6 +90,55 @@ class _ReportEventScreenState extends State<ReportEventScreen> {
     }
   }
 
+  /// Date picker, then time picker. Today's date limits the time to now or earlier.
+  Future<void> _pickWhen() async {
+    final now = DateTime.now();
+    final start = _when ?? now;
+    final date = await showDatePicker(
+      context: context,
+      initialDate: start,
+      firstDate: DateTime(2000),
+      lastDate: now,
+      helpText: 'When did it happen?',
+    );
+    if (date == null || !mounted) return;
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(start),
+      helpText: 'At what time?',
+    );
+    if (time == null || !mounted) return;
+    final picked = DateTime(date.year, date.month, date.day, time.hour, time.minute);
+    final later = DateTime.now();
+    setState(() {
+      _sentFor = null;
+      if (picked.isAfter(later)) {
+        _error = "That time hasn't happened yet. Pick now or earlier.";
+      } else {
+        _error = null;
+        _when = picked;
+      }
+    });
+  }
+
+  /// "Now", or e.g. "Today, 2:41 PM" / "Yesterday, 11:05 PM" / "Nov 12, 2026, 8:00 AM".
+  String _whenText(BuildContext context) {
+    final when = _when;
+    if (when == null) return 'Now';
+    final loc = MaterialLocalizations.of(context);
+    final time = loc.formatTimeOfDay(TimeOfDay.fromDateTime(when));
+    final now = DateTime.now();
+    final days = DateTime(now.year, now.month, now.day)
+        .difference(DateTime(when.year, when.month, when.day))
+        .inDays;
+    final day = switch (days) {
+      0 => 'Today',
+      1 => 'Yesterday',
+      _ => loc.formatMediumDate(when),
+    };
+    return '$day, $time';
+  }
+
   Future<void> _send() async {
     final cat = _cat;
     if (cat == null || _busy) return;
@@ -100,9 +153,9 @@ class _ReportEventScreenState extends State<ReportEventScreen> {
       final photo = _photo?.path;
       switch (widget.kind) {
         case ReportKind.cough:
-          await api.cough(cat, _info.text, photoPath: photo);
+          await api.cough(cat, _info.text, photoPath: photo, when: _when);
         case ReportKind.litterbox:
-          await api.litterbox(cat, _info.text, photoPath: photo);
+          await api.litterbox(cat, _info.text, photoPath: photo, when: _when);
       }
       if (!mounted) return;
       setState(() {
@@ -110,6 +163,7 @@ class _ReportEventScreenState extends State<ReportEventScreen> {
         _cat = null; // ready for the next report
         _info.clear();
         _photo = null;
+        _when = null;
       });
     } on ApiException catch (e) {
       if (!mounted) return;
@@ -213,6 +267,23 @@ class _ReportEventScreenState extends State<ReportEventScreen> {
           ],
         ),
         if (_cat != null) ...[
+          const SizedBox(height: 16),
+          Card.outlined(
+            margin: EdgeInsets.zero,
+            child: ListTile(
+              leading: const Icon(Icons.schedule),
+              title: const Text('When'),
+              subtitle: Text(_whenText(context)),
+              enabled: !_busy,
+              onTap: _pickWhen,
+              trailing: _when == null
+                  ? const Icon(Icons.edit_calendar_outlined)
+                  : TextButton(
+                      onPressed: _busy ? null : () => setState(() => _when = null),
+                      child: const Text('Now'),
+                    ),
+            ),
+          ),
           const SizedBox(height: 16),
           TextField(
             controller: _info,

@@ -5,17 +5,19 @@ POST /identify   upload a photo (form: file, key, optional user) -> JSON
                  `picture` row (source identify), no Discord
 POST /litterbox  same as /identify (source litterbox), and also posts the result + photo
                  to Discord. The Pi sends user=pi.
-                 With form `cat` (and optional info, file): a visit reported by hand from
-                 the app's Events tab. Works like /cough: the litterbox event is recorded
-                 now, a photo is optional (saved like /identify's, source litterbox, linked
+                 With form `cat` (and optional info, file, event_time): a visit reported
+                 by hand from the app's Events tab. Works like /cough: the litterbox event
+                 is recorded now (at event_time), a photo is optional (saved like /identify's, source litterbox, linked
                  to the event), posts to the litterbox Discord channel; returns null if that
                  webhook isn't set (the event is still recorded)
-POST /cough      form: cat, key, optional info, optional user, optional file -> records a
+POST /cough      form: cat, key, optional info, user, file, event_time -> records a
                  cough event and posts to the cough Discord channel; returns null if that
                  webhook isn't set (the event is still recorded). A photo in `file` is
                  handled like /identify's (model guess, saved to inbox/ for labeling,
                  `picture` row with source identify), linked to the event, attached to the
-                 Discord post, and returned as "photo" (the /identify JSON)
+                 Discord post, and returned as "photo" (the /identify JSON). event_time
+                 (ISO 8601 with offset; missing = now; not in the future) is the event's
+                 event_timestamp; the photo's picture row keeps its arrival time
 GET  /label      page to label captured photos (grows the dataset); same page and
                  /api/* as label.py, see sorter_core.py and ui/. Optional ?user=<name>
                  records who labeled. Labeling Litten or Shinx with an event type (default
@@ -47,7 +49,7 @@ import threading
 import time
 from pathlib import Path
 from urllib.parse import parse_qs
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import joblib
@@ -174,17 +176,19 @@ async def identify(tasks: BackgroundTasks, file: UploadFile = File(...), key: st
 @app.post("/litterbox")
 async def litterbox(tasks: BackgroundTasks, file: UploadFile | None = File(None),
                     key: str = Form(""), user: str = Form(""), cat: str = Form(""),
-                    info: str = Form("")):
+                    info: str = Form(""), event_time: str = Form("")):
     """Same as /identify (same JSON, same saved photo), and also posts the result
     and the photo to Discord. This is the one the Pi should call.
     With `cat` (the app's Add litterbox sheet): a litterbox visit reported by hand, like
-    /cough: the event is recorded now, `file` and `info` are optional, see report_event()."""
+    /cough: the event is recorded now, `file`, `info` and `event_time` are optional, see
+    report_event()."""
     received = db.utcnow()
     if cat:
         check_key(key)
         return report_event(
             tasks, "litterbox_report", raw=await file.read() if file is not None else b"",
-            cat=cat, info=info, user=user, received=received, source="litterbox",
+            cat=cat, info=info, user=user, received=received, event_time=event_time,
+            source="litterbox",
             webhook=DISCORD_WEBHOOK, what="litterbox report",
             text=lambda ts, note: f"**{cat}** used the litterbox at {ts} (reported from the app). "
                                   f"Additional info: {note}")
@@ -201,39 +205,65 @@ async def litterbox(tasks: BackgroundTasks, file: UploadFile | None = File(None)
 @app.post("/cough")
 async def cough(tasks: BackgroundTasks, cat: str = Form(""), key: str = Form(""),
                 info: str = Form(""), user: str = Form(""),
-                file: UploadFile | None = File(None)):
+                file: UploadFile | None = File(None), event_time: str = Form("")):
     """Record a cough event (no event if `cat` isn't Litten or Shinx) and post it to the
-    cough Discord channel. Returns null when that webhook isn't set. Optional photo: see
-    report_event()."""
+    cough Discord channel. Returns null when that webhook isn't set. Optional photo and
+    event_time: see report_event()."""
     received = db.utcnow()
     check_key(key)
     return report_event(
         tasks, "cough", raw=await file.read() if file is not None else b"", cat=cat,
-        info=info, user=user, received=received, source="identify",
+        info=info, user=user, received=received, event_time=event_time, source="identify",
         webhook=COUGH_DISCORD_WEBHOOK, what="cough report",
         text=lambda ts, note: f"**{cat}** just had cough attack at {ts}. Additional info: {note}")
 
 
+# A picked event time may be this far ahead of the server's clock (phone clock drift).
+CLOCK_SLACK = timedelta(minutes=5)
+
+
+def parse_event_time(value: str, received: datetime) -> datetime:
+    """`event_time` from the app (ISO 8601 with a UTC offset, e.g. 2026-11-14T21:41:00Z):
+    when the event happened. Missing means when the request arrived. 400 if it can't be
+    read, has no offset, or is in the future."""
+    if not value.strip():
+        return received
+    try:
+        t = datetime.fromisoformat(value.strip())
+    except ValueError:
+        raise HTTPException(400, "event_time must be an ISO 8601 date and time")
+    if t.tzinfo is None:
+        raise HTTPException(400, "event_time needs a UTC offset (e.g. ...Z or ...-06:00)")
+    if t > received + CLOCK_SLACK:
+        raise HTTPException(400, "event_time can't be in the future")
+    return min(t.astimezone(timezone.utc), received)
+
+
 def report_event(tasks: BackgroundTasks, kind: str, *, raw: bytes, cat: str, info: str,
-                 user: str, received: datetime, source: str, webhook: str, what: str, text):
+                 user: str, received: datetime, event_time: str, source: str, webhook: str,
+                 what: str, text):
     """An event reported from the app with the cat picked by hand (/cough, /litterbox with
     `cat`). The db writer `kind` records it after the response (no event if `cat` isn't
     Litten or Shinx). An optional photo (`raw`) is handled like /identify's (model guess if
     the model is loaded, saved to inbox/ for labeling, `picture` row with `source`), linked
     to the event, attached to the Discord post and returned as "photo". A file that isn't
     an image gives 400 and nothing is recorded. Returns null when `webhook` isn't set.
-    `text(timestamp, note)` is the Discord message."""
+    `event_time` (see parse_event_time) becomes the event's event_timestamp; the photo's
+    picture row keeps the arrival time. `text(timestamp, note)` is the Discord message."""
+    happened = parse_event_time(event_time, received)  # before anything is saved
     photo = None
     if raw:
         photo, img, _ = identify_photo(raw, tasks, received=received, source=source, user=user)
     # Added after the picture write, so the event can find its picture row.
     tasks.add_task(db.safe_write, kind, {"cat": cat, "user": user or None,
                                          "notes": info.strip() or None,
-                                         "event_timestamp": received,
+                                         "event_timestamp": happened,
                                          "photo": photo["saved_as"] if photo else None})
     if not webhook:
         return None
-    timestamp = received.astimezone(EDMONTON_TZ).strftime("%Y-%m-%d %H:%M:%S %Z")
+    timestamp = happened.astimezone(EDMONTON_TZ).strftime("%Y-%m-%d %H:%M:%S %Z")
+    if received - happened > CLOCK_SLACK:  # set by hand to earlier: say when it was sent
+        timestamp += f" (reported {received.astimezone(EDMONTON_TZ):%Y-%m-%d %H:%M})"
     msg = text(timestamp, info.strip() or "No additional info.")
     files = None
     if photo:
