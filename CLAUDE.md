@@ -33,7 +33,7 @@ Ubuntu server on the home network (192.168.1.116:8000). Nothing is exposed to th
 | `pi_trigger.py` | Raspberry Pi 3: gpiozero `MotionSensor(17)` -> `phone_control.py` takes a photo on a Galaxy S20 FE over adb -> POSTs it to `/litterbox` with `user=pi`. 20 s cooldown. Config via `.env` (`SERVER`, `API_KEY`, optional `CAT_ID_USER`). |
 | `phone_control.py` | `PhoneController` (pure-python-adb): wake screen, take photo, fetch newest file from `/sdcard/DCIM/Camera/`. Needs an `adb` server running on the Pi. |
 | `pi_requirements.txt` | Pi-only deps: pure-python-adb, gpiozero, lgpio, requests, python-dotenv |
-| `cat_id_app/` | Flutter Android app (see below). Excluded in `.dockerignore`. |
+| `cat_id_app/` | Flutter Android app (see below). Excluded in `.dockerignore`. Walking-cat sprites in `cat_id_app/assets/sprites/` (`tool/fetch_sprites.py`). |
 | `Dockerfile`, `docker-compose.yml` | `python:3.14-slim`; bind mounts for `data/`, `inbox/`, `model.joblib`, `embeddings_cache.npz`, `hf_cache/`; `db` Postgres 18 service. |
 
 Not in git: `data/`, `inbox/`, `model.joblib`, `embeddings_cache.npz`, `hf_cache/`, `.env`.
@@ -169,11 +169,36 @@ to Add event > Litterbox).
   today, time optional, clinic pre-filled "Millwoods East Veterinary Clinic"; reasons, weight,
   cost, follow-up and notes per cat) and the visit list with edit, delete, "Show deleted" and
   restore. No offline caching: if the server can't be reached it shows the error.
+- Walking cats (`lib/pets/`): Shinx and Litten walk, sit and sleep on a 60 px strip above the
+  tab bar, drawn over the content (`WithPets` in `home_screen.dart` pads the tabs by 60 px; the
+  `PetLayer` box is 60 + 48 px so hops and hearts can rise over the content). Only a cat
+  catches taps (painter `hitTest`); tapping one makes it face you, nod and show a pixel heart
+  (drawn in code; Litten red, Shinx gold). An Identify result of Litten or Shinx makes that cat
+  hop 3 times (`PetEvents.instance.celebrate`, called from `identify_screen.dart`). Events >
+  Add event: the form covers the strip, so the cats react when it closes
+  (`ReportEventScreen.onSent` collects what was sent; `_addEvent` in `events_screen.dart` calls
+  `PetEvents.instance.afterReports`): litterbox = hop, cough = face you and nod (no heart), one
+  reaction per cat (hop beats nod), first after 0.3 s, the next 0.8 s later. Delays run on the
+  pet layer's own clock, not timers.
+  `pet.dart` is the state machine (idle / walk left / walk right / sleep picked at random;
+  hop, love and nod interrupt and return to the previous state, sleep wakes to idle).
+  `pet_settings.dart` (loaded in `main.dart`): on/off and per-cat Auto / Normal / Shiny (Auto =
+  1 in 20 shiny roll per launch), set from the paw button in the app bar
+  (`pet_settings_sheet.dart`). Paused in the background; hidden when the phone's reduce-motion
+  setting is on.
+  Sprites: `assets/sprites/<cat>/<default|shiny>/` from PMD SpriteCollab (CC BY-NC 4.0, credit
+  in `assets/sprites/CREDITS.md` and the settings sheet), copied once by
+  `tool/fetch_sprites.py` (stdlib, needs git). Sheets: frames across, rows = directions (0
+  faces you, 2 right, 6 left; Sleep has 1 row); durations in 1/60 s ticks; every frame is
+  centred on the cat's position with feet 7 sprite px below centre. Drawn at 2x with
+  `FilterQuality.none`.
 - `api.dart`: `health()`, `identify(path, sendToDiscord:)` (`/identify` or `/litterbox`; the app now only
   uses `/identify`), `cough(cat, info, photoPath:, when:)`, `litterbox(cat, info, photoPath:, when:)`, `vetVisits`, `addVetVisits`, `editVetVisit`, `deleteVetVisit`,
   `restoreVetVisit`, `eventTypes`, `events`, `pictureUri`, `retrain()`.
 - Tests: `flutter test` (`test/vet_screen_test.dart` and `test/events_screen_test.dart` drive
-  the Vet and Events tabs against a fake server).
+  the Vet and Events tabs against a fake server; `test/pets/` covers the cats' state machine,
+  sprite sheets and assets, taps, Identify hops, after-form reactions and settings;
+  `events_screen_test.dart` checks the form's reactions are sent only once it closes).
 - Build: `cd cat_id_app && flutter run --release` or `flutter build apk --release`.
   Release build has `isMinifyEnabled = false` / `isShrinkResources = false` in
   `android/app/build.gradle.kts` (R8 broke shared_preferences). minSdk 24.

@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../camera_recovery.dart';
+import '../pets/pet_layer.dart';
+import '../pets/pet_settings.dart';
+import '../pets/pet_settings_sheet.dart';
 import '../server_store.dart';
 import '../who_am_i.dart';
 import 'events_screen.dart';
@@ -123,6 +126,15 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  /// The walking-cats settings (on/off, normal or shiny).
+  void _openPetSettings() {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (_) => const PetSettingsSheet(),
+    );
+  }
+
   NavigationDestination _destination(AppTab t) {
     switch (t) {
       case AppTab.identify:
@@ -186,6 +198,12 @@ class _HomeScreenState extends State<HomeScreen> {
               onPressed: _pickWhoAmI,
             ),
           ),
+          if (PetSettings.current != null)
+            IconButton(
+              tooltip: 'Walking cats',
+              icon: const Icon(Icons.pets),
+              onPressed: _openPetSettings,
+            ),
           IconButton(
             tooltip: 'Servers',
             icon: const Icon(Icons.dns_outlined),
@@ -193,9 +211,12 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      body: IndexedStack(
-        index: kTabOrder.indexOf(_tab),
-        children: [for (final t in kTabOrder) _body(t, server, tag)],
+      // Shinx and Litten walk on a strip under the tabs (see lib/pets/).
+      body: WithPets(
+        child: IndexedStack(
+          index: kTabOrder.indexOf(_tab),
+          children: [for (final t in kTabOrder) _body(t, server, tag)],
+        ),
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: kTabOrder.indexOf(_tab),

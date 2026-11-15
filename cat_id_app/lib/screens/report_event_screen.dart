@@ -30,11 +30,15 @@ enum ReportKind {
 /// from the server's /asset/ route, so there is only one copy of them.
 class ReportEventScreen extends StatefulWidget {
   const ReportEventScreen(
-      {super.key, required this.store, required this.server, required this.kind});
+      {super.key, required this.store, required this.server, required this.kind, this.onSent});
 
   final ServerStore store;
   final Server server;
   final ReportKind kind;
+
+  /// Called after each report the server accepted, with the cat it was for. The Events tab
+  /// uses it to make the walking cats react once this form closes.
+  final void Function(String cat)? onSent;
 
   @override
   State<ReportEventScreen> createState() => _ReportEventScreenState();
@@ -157,6 +161,7 @@ class _ReportEventScreenState extends State<ReportEventScreen> {
         case ReportKind.litterbox:
           await api.litterbox(cat, _info.text, photoPath: photo, when: _when);
       }
+      widget.onSent?.call(cat);
       if (!mounted) return;
       setState(() {
         _sentFor = cat;
