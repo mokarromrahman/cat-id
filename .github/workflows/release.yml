@@ -95,3 +95,10 @@ jobs:
           body: |
             Server image: `ghcr.io/${{ github.repository }}:${{ github.ref_name }}` (without the `v`)
             Android APK: attached below once the "Build APK" workflow has been run for this tag.
+
+  apk:
+    needs: release
+    uses: ./.github/workflows/apk.yml
+    with:
+      tag: ${{ github.ref_name }}
+    secrets: inherit
