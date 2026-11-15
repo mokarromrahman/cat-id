@@ -25,6 +25,26 @@ each cat by hand, train, then let the model pre-sort the rest into the inbox.
 Check: `curl http://SERVER:8000/health`
 Test:  `curl -F file=@cat.jpg -F key=$API_KEY http://SERVER:8000/identify`
 
+## 3b. Away from home (Tailscale)
+The `tailscale` service in `docker-compose.yml` puts cat-id on your tailnet. Nothing is opened
+on the router, and the tailnet sees only the cat-id container.
+
+1. Tailscale admin console: turn on MagicDNS and HTTPS certificates (DNS page).
+2. Access controls: replace the default allow-all with
+   ```json
+   {
+     "tagOwners": { "tag:catserver": ["autogroup:admin"] },
+     "grants": [
+       { "src": ["autogroup:member"], "dst": ["tag:catserver"], "ip": ["443"] }
+     ]
+   }
+   ```
+3. Settings -> Keys: generate an auth key (one-off, pre-approved, tag `tag:catserver`) and
+   put it in the server's `.env` as `TS_AUTHKEY=...`. Make sure `API_KEY` is set there too.
+4. Deploy, then check: `docker compose exec tailscale tailscale serve status`.
+5. Phones: install Tailscale, sign in (invite other people as tailnet members), and add the
+   server in the app as `https://cat-id.<tailnet>.ts.net`.
+
 ## 4. Capture (Raspberry Pi)
 Install an "IP Webcam" style app on the S20 FE (serves a still at
 `http://PHONE_IP:8080/photoaf.jpg`), give the phone a fixed IP, and run

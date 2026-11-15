@@ -13,13 +13,22 @@ class Server {
   /// What you call it, e.g. "Home server". Optional.
   final String name;
 
-  /// host:port, e.g. 192.168.1.116:8000
+  /// Where the server is, in one of two forms (see [normalizeAddress]):
+  /// - "host:port", e.g. 192.168.1.116:8000: plain HTTP, home network only.
+  /// - "https://host" or "https://host:port", e.g. https://cat-id.tail1234.ts.net:
+  ///   HTTPS through Tailscale Serve, works from outside the home with Tailscale on.
   final String address;
 
   String get label => name.isEmpty ? address : name;
 
-  /// The app talks plain HTTP: the server is only reachable on the home network.
-  Uri get baseUri => Uri.parse('http://$address');
+  bool get isHttps => address.startsWith('https://');
+
+  Uri get baseUri => isHttps ? Uri.parse(address) : Uri.parse('http://$address');
+
+  /// Second half of the "Can't reach ..." message.
+  String get reachHint => isHttps
+      ? 'Is the server running, and is Tailscale connected on this phone?'
+      : 'Is the server running, and is this phone on the home Wi-Fi?';
 
   Map<String, dynamic> toJson() => {'id': id, 'name': name, 'address': address};
 
@@ -30,18 +39,28 @@ class Server {
       );
 }
 
-/// "192.168.1.116" or "http://192.168.1.116:8000/" -> "192.168.1.116:8000".
-/// The port defaults to 8000. Returns null if it doesn't look like an address.
+/// Plain HTTP (port defaults to 8000):
+///   "192.168.1.116" or "http://192.168.1.116:8000/" -> "192.168.1.116:8000".
+/// HTTPS (port defaults to 443, and is left out when it is 443):
+///   "https://cat-id.tail1234.ts.net/" -> "https://cat-id.tail1234.ts.net".
+/// A Tailscale name (ending in .ts.net) typed without a scheme is HTTPS, since Tailscale
+/// Serve only answers there. Returns null if it doesn't look like an address.
 String? normalizeAddress(String input) {
   var s = input.trim();
-  s = s.replaceFirst(RegExp(r'^https?://', caseSensitive: false), '');
+  final scheme = RegExp(r'^(https?)://', caseSensitive: false).firstMatch(s);
+  if (scheme != null) s = s.substring(scheme.end);
   s = s.replaceFirst(RegExp(r'/+$'), '');
   final m = RegExp(r'^([A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?)(?::(\d{1,5}))?$')
       .firstMatch(s);
   if (m == null) return null;
-  final port = m.group(2) == null ? 8000 : int.parse(m.group(2)!);
+  final host = m.group(1)!;
+  final https = scheme != null
+      ? scheme.group(1)!.toLowerCase() == 'https'
+      : host.toLowerCase().endsWith('.ts.net');
+  final port = m.group(2) == null ? (https ? 443 : 8000) : int.parse(m.group(2)!);
   if (port < 1 || port > 65535) return null;
-  return '${m.group(1)}:$port';
+  if (https) return port == 443 ? 'https://$host' : 'https://$host:$port';
+  return '$host:$port';
 }
 
 /// Remembers up to [maxServers] servers.
@@ -133,7 +152,7 @@ class ServerStore extends ChangeNotifier {
     }
     final addr = normalizeAddress(address);
     if (addr == null) {
-      return "That doesn't look like an address. Try 192.168.1.116 or 192.168.1.116:8000.";
+      return "That doesn't look like an address. Try 192.168.1.116, 192.168.1.116:8000 or https://cat-id.<tailnet>.ts.net.";
     }
     if (_servers.any((s) => s.address == addr)) {
       return 'That address is already saved.';
@@ -164,7 +183,7 @@ class ServerStore extends ChangeNotifier {
   }) async {
     final addr = normalizeAddress(address);
     if (addr == null) {
-      return "That doesn't look like an address. Try 192.168.1.116 or 192.168.1.116:8000.";
+      return "That doesn't look like an address. Try 192.168.1.116, 192.168.1.116:8000 or https://cat-id.<tailnet>.ts.net.";
     }
     if (_servers.any((s) => s.id != id && s.address == addr)) {
       return 'That address is already saved.';

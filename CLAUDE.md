@@ -2,7 +2,9 @@
 
 Identifies which of two cats (Litten, Shinx) is in a photo, posts litterbox visits and
 cough reports to Discord, and records photos, events and vet visits in Postgres. Runs on an
-Ubuntu server on the home network (192.168.1.116:8000). Nothing is exposed to the internet.
+Ubuntu server on the home network (192.168.1.116:8000). Nothing is exposed to the internet: away
+from home the app reaches it over Tailscale (`tailscale` sidecar in `docker-compose.yml`,
+https://cat-id.<tailnet>.ts.net, only the owner's and Ashley's phones, only port 443).
 
 ## Working rules
 
@@ -34,7 +36,7 @@ Ubuntu server on the home network (192.168.1.116:8000). Nothing is exposed to th
 | `phone_control.py` | `PhoneController` (pure-python-adb): wake screen, take photo, fetch newest file from `/sdcard/DCIM/Camera/`. Needs an `adb` server running on the Pi. |
 | `pi_requirements.txt` | Pi-only deps: pure-python-adb, gpiozero, lgpio, requests, python-dotenv |
 | `cat_id_app/` | Flutter Android app (see below). Excluded in `.dockerignore`. Walking-cat sprites in `cat_id_app/assets/sprites/` (`tool/fetch_sprites.py`). |
-| `Dockerfile`, `docker-compose.yml` | `python:3.14-slim`; bind mounts for `data/`, `inbox/`, `model.joblib`, `embeddings_cache.npz`, `hf_cache/`; `db` Postgres 18 service. |
+| `Dockerfile`, `docker-compose.yml` | `python:3.14-slim`; bind mounts for `data/`, `inbox/`, `model.joblib`, `embeddings_cache.npz`, `hf_cache/`; `db` Postgres 18 service; `tailscale` sidecar (cat-id uses its network, so port 8000 is published on it; Serve config inline under `configs:` because `deploy.yml` checks out only the compose file; login kept in the `tailscale-state` volume; `TS_AUTHKEY` in `.env` for the first start). |
 
 Not in git: `data/`, `inbox/`, `model.joblib`, `embeddings_cache.npz`, `hf_cache/`, `.env`.
 
@@ -150,7 +152,10 @@ comes back on Identify). The Identify tab only identifies (no Discord button; th
 to Add event > Litterbox).
 
 - Up to 5 servers saved (`server_store.dart`, SharedPreferences); each server's API key in
-  `flutter_secure_storage` (Android Keystore). Plain http on the home network.
+  `flutter_secure_storage` (Android Keystore). Plain http on the home network (`host:port`,
+  port 8000 by default), or HTTPS through Tailscale Serve (`https://host`, port 443 by default;
+  a `.ts.net` name typed without a scheme is HTTPS). `normalizeAddress` and `Server.baseUri`
+  in `server_store.dart`; old saved `host:port` entries stay HTTP. Tests: `test/server_store_test.dart`.
 - "Who am I" (`who_am_i.dart`): Ashley or Mac, one setting per phone, picked from the app bar.
   Sent as `user` on identify, litterbox, cough and vet requests, and as `?user=` on the Label
   web view. Not set means nothing is sent (server records `system`).

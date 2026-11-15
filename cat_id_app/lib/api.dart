@@ -445,13 +445,18 @@ class CatApi {
       throw ApiException('${server.address} took too long to answer.');
     } on SocketException {
       throw _unreachable();
+    } on HandshakeException {
+      // HTTPS (Tailscale Serve) only: the certificate couldn't be checked.
+      throw ApiException(
+          "Couldn't make a secure connection to ${server.address}. Check that HTTPS "
+          'certificates are turned on for the tailnet and the address is right.');
     } on http.ClientException {
       throw _unreachable();
     }
   }
 
   ApiException _unreachable() => ApiException(
-      "Can't reach ${server.address}. Is the server running, and is this phone on the home Wi-Fi?");
+      "Can't reach ${server.address}. ${server.reachHint}");
 
   Map<String, dynamic> _json(http.Response r) {
     dynamic body;

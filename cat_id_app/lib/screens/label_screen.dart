@@ -39,7 +39,7 @@ class _LabelScreenState extends State<LabelScreen> {
             // Ignore failures of small things on the page; only a failed page matters.
             if (e.isForMainFrame != false && mounted) {
               setState(() => _error =
-                  "Can't reach ${widget.server.address}. Is the server running, and is this phone on the home Wi-Fi?");
+                  "Can't reach ${widget.server.address}. ${widget.server.reachHint}");
             }
           },
         ),
