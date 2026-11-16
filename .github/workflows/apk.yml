@@ -46,9 +46,10 @@ jobs:
           flutter-version: 3.47.7
           cache: true
 
-      # The release build is signed with the debug key (build.gradle.kts). Using the Mac's
-      # own ~/.android/debug.keystore means these APKs install as updates over the app that's
-      # already on the phones, keeping saved servers, API keys and "Who am I".
+      # The release build is signed with the "shared" key in build.gradle.kts, which reads
+      # CATID_KEYSTORE. This is the Mac's own ~/.android/debug.keystore, so these APKs install
+      # as updates over the app already on the phones, keeping saved servers, API keys and
+      # "Who am I".
       - name: Restore the signing key
         working-directory: .
         env:
@@ -57,8 +58,8 @@ jobs:
           if [ -z "$DEBUG_KEYSTORE_B64" ]; then
             echo "::error::Add the DEBUG_KEYSTORE_B64 secret first (see the setup notes)"; exit 1
           fi
-          mkdir -p ~/.android
-          echo "$DEBUG_KEYSTORE_B64" | base64 -d > ~/.android/debug.keystore
+          echo "$DEBUG_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/debug.keystore"
+          echo "CATID_KEYSTORE=$RUNNER_TEMP/debug.keystore" >> "$GITHUB_ENV"
 
       - run: flutter pub get
 
@@ -67,14 +68,24 @@ jobs:
 
       - name: Build the APK
         # versionName comes from the tag (v0.2.0 -> 0.2.0). versionCode must go up every
-        # build or Android refuses the update; run_number + 100 keeps it above the 1 that
-        # pubspec.yaml gives local builds.
+        # build or Android refuses the update; minutes since 1970 always does.
         run: |
           VERSION="${{ inputs.tag }}"
           flutter build apk --release \
             --build-name="${VERSION#v}" \
             --build-number=$(( $(date +%s) / 60 ))
           mv build/app/outputs/flutter-apk/app-release.apk "build/cat-id-${VERSION}.apk"
+
+      # Fails the run if the APK isn't signed with the Mac's key, so a wrong key shows up
+      # here instead of as "App not installed" on the phone.
+      - name: Check the APK is signed with the Mac's key
+        run: |
+          SIGNER="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)/apksigner"
+          GOT=$("$SIGNER" verify --print-certs "build/cat-id-${{ inputs.tag }}.apk" 2>/dev/null \
+                | grep 'SHA-256' | awk '{print $NF}')
+          echo "APK key: $GOT"
+          [ "$GOT" = "31873a2035c9a5cdeab5f21eb643729700e5ce63c49abe55ae0218c767835183" ] \
+            || { echo "::error::APK is not signed with the shared key"; exit 1; }
 
       - uses: softprops/action-gh-release@v2
         with:

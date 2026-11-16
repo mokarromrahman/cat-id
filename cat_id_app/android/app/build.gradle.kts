@@ -29,9 +29,21 @@ android {
         versionName = flutter.versionName
     }
 
+    // One key for every build, so a new APK installs as an update over the old one.
+    // CI sets CATID_KEYSTORE (apk.yml); on the Mac it falls back to the usual debug key.
+    signingConfigs {
+        create("shared") {
+            storeFile = file(System.getenv("CATID_KEYSTORE")
+                ?: "${System.getProperty("user.home")}/.android/debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
        release {
-           signingConfig = signingConfigs.getByName("debug")
+           signingConfig = signingConfigs.getByName("shared")
            isMinifyEnabled = false
            isShrinkResources = false
        }
