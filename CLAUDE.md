@@ -25,7 +25,8 @@ https://cat-id.<tailnet>.ts.net, only the owner's and Ashley's phones, only port
 | `db.py` | SQLAlchemy 2 models, connection, `safe_write`/`safe_read`, and the writers (picture, label, crop, archive, delete, undo, cough) that `app.py` and `replay_db_failed.py` share. |
 | `vet_api.py` | `/vet_visit` routes (APIRouter included by `app.py`). |
 | `events_api.py` | `/events`, `/event_types`, `/picture/{id}/image` for the app's Events tab (APIRouter included by `app.py`). |
-| `alembic.ini`, `migrations/` | Alembic. `0001_initial_schema.py`: tables, CHECKs, audit trigger, `active_vet_visit` view, seed rows. `0002_location_and_litterbox_clean.py`: `location`, `litterbox_clean_event`, `location_id` on `picture`/`event`, backfill of the Pi's photos to basement. |
+| `chores_api.py` | `/chores`, `/chore_events` for the app's Chores page (APIRouter included by `app.py`). |
+| `alembic.ini`, `migrations/` | Alembic. `0001_initial_schema.py`: tables, CHECKs, audit trigger, `active_vet_visit` view, seed rows. `0002_location_and_litterbox_clean.py`: `location`, `litterbox_clean_event`, `location_id` on `picture`/`event`, backfill of the Pi's photos to basement. `0003_chores.py`: `chore`, `chore_event`, `chore_event_doer`, `app_user.human`, seed chores. |
 | `start.py` | Container entry point: waits up to 30 s for Postgres, runs `alembic upgrade head`, then starts uvicorn either way. |
 | `replay_db_failed.py` | Replays `inbox/_db_failed.jsonl` (writes that failed while Postgres was down). |
 | `sorter_core.py` | Framework-free photo sorter shared by `label.py` and `/label`: undo history, crop/rotate, archive, delete, log. Optional `on_action` callback (server only) updates the DB. |
@@ -75,9 +76,15 @@ Not in git: `data/`, `inbox/`, `model.joblib`, `embeddings_cache.npz`, `hf_cache
   `GET /event_types`, `GET /picture/{id}/image` (serves only files under `data/` or `inbox/`):
   see `events_api.py`. View only. Key in `X-API-Key`; 503 if the DB is down. Totals and chart
   data cover the whole filtered range and come with the first page only.
+- `GET|POST /chores`, `PATCH /chores/{id}`, `GET|POST /chore_events`,
+  `PATCH|DELETE /chore_events/{id}`, `POST /chore_events/{id}/restore`: see `chores_api.py`.
+  JSON bodies, key in `X-API-Key`, need the DB (503 if down; no failed-file replay). No
+  Discord. `GET /chores` also returns `people` (the `human` users, for "Done by").
 - `GET /health`: `{model_loaded, classes, photos: {class: count}, waiting_in_inbox, version,
-  commit, litterboxes}`. `litterboxes`: per location `{location, name, last_cleaned,
-  bag_last_changed}` (UTC, null if never), or null if the DB is down (`db.litterbox_status()`). `version`/`commit` come from the `CAT_ID_VERSION`/`CAT_ID_COMMIT` build args baked
+  commit, litterboxes, chores}`. `litterboxes`: per location `{location, name, last_cleaned,
+  bag_last_changed}` (UTC, null if never), or null if the DB is down (`db.litterbox_status()`).
+  `chores`: the active chores, same objects as `GET /chores` (`db.chore_rows()`), or null if
+  the DB is down. `version`/`commit` come from the `CAT_ID_VERSION`/`CAT_ID_COMMIT` build args baked
   into the image (`release.yml` passes the tag and `github.sha`); a local build says `dev` and
   `null` unless you run `CAT_ID_COMMIT=$(git rev-parse HEAD) docker compose up -d --build`.
   The app's Health tab shows them ("Server v0.2.0", "Commit 433c253").
@@ -90,7 +97,7 @@ Not in git: `data/`, `inbox/`, `model.joblib`, `embeddings_cache.npz`, `hf_cache
   `inbox/_both`; Done/Skip goes to `inbox/_archived`; Delete really deletes (undoable in-session).
   Use `shutil.move`, not `Path.rename` (separate Docker bind mounts). The label buttons come from
   the folders in `data/`.
-- `/identify`, `/litterbox`, `/litterbox_clean`, `/cough`, `/vet_visit`, `/events`, `/event_types` and
+- `/identify`, `/litterbox`, `/litterbox_clean`, `/cough`, `/vet_visit`, `/events`, `/event_types`, `/chores`, `/chore_events` and
   `/picture/{id}/image` check `API_KEY`. `/label` and its
   `/api/*` routes don't, on purpose (owner's choice): anyone on the home network can label.
 
@@ -101,10 +108,13 @@ Not in git: `data/`, `inbox/`, `model.joblib`, `embeddings_cache.npz`, `hf_cache
   gotcha day 2023-11-21), `event_type` (`litterbox`/Litterbox, `cough`/Cough: code + display
   name), `label` (Litten, Shinx, neither, both, with optional cat), `picture`, `event`,
   `vet_visit`, `location` (`basement`/Basement, `master_bathroom`/Master Bathroom: unique `name`
-  + `label_name`), `litterbox_clean_event`. View `active_vet_visit`. Diagram: https://claude.ai/artifact/NsFLSjW8gcAGmHAmhoJRYa
+  + `label_name`), `litterbox_clean_event`, `chore`, `chore_event`, `chore_event_doer`. View `active_vet_visit`. Diagram: https://claude.ai/artifact/NsFLSjW8gcAGmHAmhoJRYa
 - A trigger on every table sets `modified_on` on insert/update (DBeaver edits too) and fills an
   empty `modified_by` with `system`. Integer identity IDs. No edit-history table.
 - `user` on every request is an `app_user` name; missing or unknown means `system`.
+  `app_user.human` (bool, default false; true for Ashley and Mac) marks people as opposed to
+  `system`/`pi`; only people can be picked as having done a chore. Someone from outside the
+  family (a cleaner) is a new `app_user` row with `human = true` (DBeaver for now).
 - `picture`: one row per photo received (`event_timestamp` = UTC time the request arrived,
   model guess, `filename`, current `file_path`, `source`, `reporter_id`, `status`
   pending/labeled/archived/deleted, `final_label_id`, `labeled_on`, `labeled_by`,
@@ -128,6 +138,17 @@ Not in git: `data/`, `inbox/`, `model.joblib`, `embeddings_cache.npz`, `hf_cache
   `server_timestamp` (when the request arrived; differs from `created_on` only for a replayed
   row), `reporter_id`, `bag_changed` (bool, default false), `notes`. No cat, no photo, not in
   `/events`.
+- `chore`: `name` (unique snake_case code, CHECK `^[a-z0-9_]+$`, never changes; the API makes
+  it from `label_name`), `label_name` (display), `warning_threshold_days` (nullable = no
+  reminder, CHECK > 0), `active` (false = hidden; chores with events can't be deleted).
+  Seeded: Vacuum 7, Laundry 7, Sweeping 7, Mopping 14, Bathrooms 7, Bed Sheets 14, Cat Food /
+  Cat Medication / Cat Treat Pickup (no threshold). Kept separate from vet_visit's pickup
+  reasons and from litterbox cleaning. Overdue = has a threshold and never done, or more than
+  threshold x 24 h since the newest non-deleted `chore_event` (`db.chore_rows()`).
+- `chore_event`: `chore_id`, `event_timestamp` (when it was done; app picks, default now; not
+  the future), `reporter_id`, `notes`, `deleted_on` (soft delete, like `vet_visit`). Who did
+  it: `chore_event_doer` (`chore_event_id` CASCADE, `app_user_id`, unique together); none =
+  not recorded. No rooms/locations.
 - `vet_visit`: `cat_id` nullable (pickups), `visit_date` (date), `appointment_time` (time,
   Edmonton clock), `doctor`, `clinic` (default `unknown`), `notes`, `reason` text[] (checkup,
   shots, emergency, food pickup, medication pickup, other; at least one), `weight_kg`
@@ -156,7 +177,10 @@ Not in git: `data/`, `inbox/`, `model.joblib`, `embeddings_cache.npz`, `hf_cache
 ## Android app (`cat_id_app/`)
 
 Flutter, Android only, sideloaded (not on the Play Store). Tabs, in `kTabOrder` in
-`lib/screens/home_screen.dart`: Health, Identify, Events, Vet, Label. Cough has no tab: the
+`lib/screens/home_screen.dart`: Health, Identify, Events, Vet, Label. Pages that don't need a
+tab go in the ☰ menu (a `NavigationDrawer`): `MenuPage` / `kMenuOrder` in `home_screen.dart`
+(add the enum value, then its case in `_menuItem` and `_menuPage`); they open full screen
+with a back button, and Health reloads when you come back. Today: Chores. Cough has no tab: the
 Events tab's Add event menu (Litterbox / Cough / Clean Litterbox) opens `ReportEventScreen`
 (`screens/report_event_screen.dart`, `ReportKind`) in a sheet: cat, When (date then time
 picker; default "Now", any past date, not the future; sent as `event_time` in UTC), note,
@@ -176,7 +200,16 @@ to Add event > Litterbox).
 - "Who am I" (`who_am_i.dart`): Ashley or Mac, one setting per phone, picked from the app bar.
   Sent as `user` on identify, litterbox, cough and vet requests, and as `?user=` on the Label
   web view. Not set means nothing is sent (server records `system`).
-- Health tab: a Litterboxes card per location: "Last cleaned <day, time> (<ago>)", red with a
+- Chores page (`screens/chores_screen.dart`, menu > Chores or Health's Chores card > Open):
+  chores sorted overdue first (never done, then longest overdue), then by due date, then no
+  reminder; red border and warning icon when overdue; "Last done <day, time> by ... (<ago>)"
+  and "Overdue by / Due in ... (every N days)". Done opens a sheet (When, Done by chips from
+  `people`, preselected with Who am I, note, Save). Edit (name, warn-after days or blank,
+  "Show on the list"), Add chore, Show hidden chores. History
+  (`screens/chore_history_screen.dart`, per chore or all): newest first, Load more, edit
+  (incl. which chore), delete, Show deleted + Restore.
+- Health tab: a Chores card with only the overdue chores, or "Nothing overdue" (hidden for
+  servers without `chores`). A Litterboxes card per location: "Last cleaned <day, time> (<ago>)", red with a
   warning icon when over 24 h or never (`kCleanOverdueAfter`), and "Bag was last changed <day,
   time>" (no highlight). Hidden for servers without `litterboxes`.
 - Label tab is a WebView of the server's `/label`. Health and Label reload each time you
@@ -220,9 +253,11 @@ to Add event > Litterbox).
 - `api.dart`: `health()`, `identify(path, sendToDiscord:)` (`/identify` or `/litterbox`; the app now only
   uses `/identify`), `cough(cat, info, photoPath:, when:)`, `litterbox(cat, info, photoPath:, when:, location:)`,
   `litterboxClean(location, bagChanged:, info:, when:)`, `vetVisits`, `addVetVisits`, `editVetVisit`, `deleteVetVisit`,
-  `restoreVetVisit`, `eventTypes`, `events`, `pictureUri`, `retrain()`.
-- Tests: `flutter test` (`test/vet_screen_test.dart`, `test/events_screen_test.dart` and
-  `test/health_screen_test.dart` drive the Vet, Events and Health tabs against a fake server;
+  `restoreVetVisit`, `eventTypes`, `events`, `pictureUri`, `retrain()`, `chores`, `addChore`, `editChore`,
+  `choreEvents`, `addChoreEvent`, `editChoreEvent`, `deleteChoreEvent`, `restoreChoreEvent`.
+- Tests: `flutter test` (`test/vet_screen_test.dart`, `test/events_screen_test.dart`,
+  `test/chores_screen_test.dart` and `test/health_screen_test.dart` drive the Vet, Events,
+  Chores and Health screens against a fake server;
   `test/pets/` covers the cats' state machine, sprite sheets and assets, taps, Identify hops,
   after-form reactions and settings; `events_screen_test.dart` checks the form's reactions
   are sent only once it closes).
@@ -269,6 +304,32 @@ server). `.env` with test values (`POSTGRES_PASSWORD`, `API_KEY=test`, empty Dis
   - Later: the Events tab's date logic (midnight in Edmonton, daylight-saving days) goes here
     too. Running tests automatically on every commit (e.g. GitHub Actions) is a separate step.
 
+- **Push notifications for overdue chores (not built; planned for its own branch).**
+  - Deciding when (needed whatever the delivery): a background job in `app.py` (a thread
+    like the DB probe, started at startup), about once an hour, calls `db.chore_rows()` and
+    sends a notification when a chore becomes overdue. Needs:
+    - a small table of what was already sent (chore, person, sent_on), so it doesn't repeat
+      every hour; a repeat rule (e.g. once a day while it stays overdue);
+    - quiet hours in Edmonton time (`events_api.TZ`);
+    - optionally per-person settings (who gets which chores), on `app_user` or a new table;
+    - an endpoint or env var to turn it off, and a log line per send.
+  - Delivery, three options:
+    1. **ntfy** (recommended to start): an `ntfy` container on the tailnet (another
+       service in `docker-compose.yml`); the server does one HTTP POST per reminder to a
+       topic; phones use the free ntfy Android app subscribed to it. Small, no Flutter
+       changes. Notifications come from the ntfy app, not cat-id; phones need Tailscale on.
+       Public ntfy.sh also works (long random topic) but chore names then go through a
+       third party.
+    2. **Firebase Cloud Messaging**: `firebase_messaging` in the app, a Firebase project and
+       `google-services.json`; the app registers its device token with a new endpoint (new
+       table of tokens per `app_user`); the server sends through the FCM HTTP v1 API with a
+       service-account key (in `.env`, not git). Real cat-id notifications that can open the
+       Chores page; works without Tailscale (Google delivers). Needs the Android 13+
+       notification permission. Medium to large.
+    3. **Phone checks for itself**: `workmanager` + `flutter_local_notifications`; the app
+       wakes in the background (every 15+ min at best), reads `/health`'s `chores` and shows
+       a local notification. No server work, but Android delays or kills background jobs
+       and it only works while Tailscale is connected. Least reliable.
 - Alerts: no litterbox visit from a cat in 24 h+, unusual frequency; weekly Discord summary
   (would read `picture`, so they don't depend on how fast photos are labeled).
 - `evaluate.py` for held-out accuracy; auto-retrain after N new labels.

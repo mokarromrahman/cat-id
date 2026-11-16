@@ -8,7 +8,10 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 Map<String, dynamic> health(
-        {Object? version = _absent, Object? commit = _absent, Object? litterboxes = _absent}) =>
+        {Object? version = _absent,
+         Object? commit = _absent,
+         Object? litterboxes = _absent,
+         Object? chores = _absent}) =>
     {
       'model_loaded': true,
       'classes': ['Litten', 'Shinx', 'neither'],
@@ -17,6 +20,7 @@ Map<String, dynamic> health(
       if (version != _absent) 'version': version,
       if (commit != _absent) 'commit': commit,
       if (litterboxes != _absent) 'litterboxes': litterboxes,
+      if (chores != _absent) 'chores': chores,
     };
 
 Future<void> _pumpHealth(WidgetTester tester, Map<String, dynamic> body) async {
@@ -120,5 +124,44 @@ void main() {
     await _pumpHealth(tester, health(litterboxes: null));
     expect(find.text('Litterboxes', skipOffstage: false), findsOneWidget);
     expect(find.textContaining("database isn't reachable", skipOffstage: false), findsOneWidget);
+  });
+
+  group('chores card', () {
+    Map<String, dynamic> c(String label, {bool overdue = false, String? lastDone, String? due}) => {
+          'id': 1, 'name': label.toLowerCase(), 'label_name': label,
+          'warning_threshold_days': 7, 'active': true, 'last_done': lastDone,
+          'last_done_by': ['Mac'], 'due_at': due, 'overdue': overdue,
+        };
+
+    testWidgets('lists only the overdue chores', (tester) async {
+      final now = DateTime.now().toUtc();
+      await _pumpHealth(tester, health(chores: [
+        c('Vacuum', lastDone: now.toIso8601String(),
+            due: now.add(const Duration(days: 7)).toIso8601String()),
+        c('Mopping', overdue: true,
+            lastDone: now.subtract(const Duration(days: 9)).toIso8601String(),
+            due: now.subtract(const Duration(days: 2)).toIso8601String()),
+      ]));
+      expect(find.text('Chores', skipOffstage: false), findsOneWidget);
+      expect(find.text('Mopping', skipOffstage: false), findsOneWidget);
+      expect(find.text('Overdue by 2 days (every 7 days)', skipOffstage: false), findsOneWidget);
+      expect(find.text('Vacuum', skipOffstage: false), findsNothing);
+    });
+
+    testWidgets('nothing overdue', (tester) async {
+      await _pumpHealth(tester, health(chores: [c('Vacuum')..['warning_threshold_days'] = null]));
+      expect(find.text('Nothing overdue', skipOffstage: false), findsOneWidget);
+    });
+
+    testWidgets('no card for an older server', (tester) async {
+      await _pumpHealth(tester, health());
+      expect(find.text('Chores', skipOffstage: false), findsNothing);
+    });
+
+    testWidgets("a note when the server's database is down", (tester) async {
+      await _pumpHealth(tester, health(chores: null));
+      expect(find.text('Chores', skipOffstage: false), findsOneWidget);
+      expect(find.textContaining("database isn't reachable", skipOffstage: false), findsOneWidget);
+    });
   });
 }

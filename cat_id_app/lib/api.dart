@@ -43,6 +43,98 @@ class LitterboxStatus {
   final DateTime? bagLastChanged;
 }
 
+/// A household chore (the server's chore table) and its status: when it was last done
+/// and by whom, and whether it's overdue (more than [warningThresholdDays] since then, or
+/// never done; never overdue without a threshold). GET /chores and GET /health's `chores`.
+class Chore {
+  Chore.fromJson(Map<String, dynamic> j)
+      : id = j['id'] as int,
+        name = j['name'] as String,
+        label = (j['label_name'] as String?) ?? j['name'] as String,
+        warningThresholdDays = (j['warning_threshold_days'] as num?)?.toInt(),
+        active = j['active'] as bool? ?? true,
+        lastDone = _time(j['last_done']),
+        lastDoneBy = [for (final n in (j['last_done_by'] as List? ?? const [])) n as String],
+        dueAt = _time(j['due_at']),
+        overdue = j['overdue'] as bool? ?? false;
+
+  static DateTime? _time(dynamic v) => v is String ? DateTime.parse(v).toLocal() : null;
+
+  final int id;
+
+  /// The code sent to the server (vacuum, cat_food_pickup); never changes.
+  final String name;
+
+  /// The display name (Vacuum, Cat Food Pickup).
+  final String label;
+
+  /// Null = no reminder.
+  final int? warningThresholdDays;
+
+  /// False = hidden from the list.
+  final bool active;
+  final DateTime? lastDone;
+  final List<String> lastDoneBy;
+
+  /// When it becomes overdue (null without a threshold, or if never done).
+  final DateTime? dueAt;
+  final bool overdue;
+}
+
+/// GET /chores: the chores, and the people who can be picked as having done one.
+class ChoreList {
+  ChoreList.fromJson(Map<String, dynamic> j)
+      : chores = [
+          for (final c in (j['chores'] as List? ?? const []))
+            Chore.fromJson(c as Map<String, dynamic>)
+        ],
+        people = [for (final p in (j['people'] as List? ?? const [])) p as String];
+
+  final List<Chore> chores;
+  final List<String> people;
+}
+
+/// One time a chore was done (the server's chore_event table).
+class ChoreEvent {
+  ChoreEvent.fromJson(Map<String, dynamic> j)
+      : id = j['id'] as int,
+        chore = j['chore'] as String,
+        choreLabel = (j['chore_label'] as String?) ?? j['chore'] as String,
+        when = DateTime.parse(j['event_timestamp'] as String).toLocal(),
+        doneBy = [for (final n in (j['done_by'] as List? ?? const [])) n as String],
+        reporter = j['reporter'] as String?,
+        notes = j['notes'] as String?,
+        modifiedBy = j['modified_by'] as String?,
+        deleted = j['deleted_on'] != null;
+
+  final int id;
+
+  /// The chore's code and display name.
+  final String chore;
+  final String choreLabel;
+  final DateTime when;
+
+  /// Who did it; empty = not recorded.
+  final List<String> doneBy;
+  final String? reporter;
+  final String? notes;
+  final String? modifiedBy;
+  final bool deleted;
+}
+
+/// One page of GET /chore_events; [next] is for Load more.
+class ChoreEventsPage {
+  ChoreEventsPage.fromJson(Map<String, dynamic> j)
+      : events = [
+          for (final e in (j['events'] as List? ?? const []))
+            ChoreEvent.fromJson(e as Map<String, dynamic>)
+        ],
+        next = j['next'] as String?;
+
+  final List<ChoreEvent> events;
+  final String? next;
+}
+
 /// One row of the server's event_type table: `type` is the code, `name` the display label.
 class EventType {
   EventType.fromJson(Map<String, dynamic> j)
@@ -438,6 +530,104 @@ class CatApi {
       throw ApiException(detail?.toString() ?? 'Server error (${r.statusCode})');
     }
     return body;
+  }
+
+  // ---------- chores (server: chores_api.py) ----------
+
+  Map<String, dynamic> _choreJson(http.Response r) {
+    final body = _detailBody(r, 'chores');
+    if (body is! Map<String, dynamic>) {
+      throw ApiException('The server sent something unexpected.');
+    }
+    return body;
+  }
+
+  /// GET /chores; [includeInactive] adds the hidden chores.
+  Future<ChoreList> chores({bool includeInactive = false}) async {
+    final r = await _guard(() => http
+        .get(_uri('/chores', includeInactive ? {'include_inactive': 'true'} : null),
+            headers: _jsonHeaders)
+        .timeout(const Duration(seconds: 15)));
+    return ChoreList.fromJson(_choreJson(r));
+  }
+
+  /// POST /chores: a new chore. [thresholdDays] null = no reminder.
+  Future<Chore> addChore(String label, int? thresholdDays) async {
+    final r = await _guard(() => http
+        .post(_uri('/chores'),
+            headers: _jsonHeaders,
+            body: jsonEncode(
+                {'user': _user, 'label_name': label, 'warning_threshold_days': thresholdDays}))
+        .timeout(const Duration(seconds: 15)));
+    return Chore.fromJson(_choreJson(r));
+  }
+
+  /// PATCH /chores/{id} with only what changed: label_name, warning_threshold_days (null =
+  /// no reminder), active.
+  Future<Chore> editChore(int id, Map<String, dynamic> changes) async {
+    final r = await _guard(() => http
+        .patch(_uri('/chores/$id'),
+            headers: _jsonHeaders, body: jsonEncode({...changes, 'user': _user}))
+        .timeout(const Duration(seconds: 15)));
+    return Chore.fromJson(_choreJson(r));
+  }
+
+  /// GET /chore_events, newest first. [chore] (a [Chore.name]) null = every chore;
+  /// [before] is the previous page's [ChoreEventsPage.next].
+  Future<ChoreEventsPage> choreEvents(
+      {String? chore, bool includeDeleted = false, String? before, int limit = 50}) async {
+    final query = {
+      'chore': ?chore,
+      if (includeDeleted) 'include_deleted': 'true',
+      'before': ?before,
+      'limit': '$limit',
+    };
+    final r = await _guard(() => http
+        .get(_uri('/chore_events', query), headers: _jsonHeaders)
+        .timeout(const Duration(seconds: 15)));
+    return ChoreEventsPage.fromJson(_choreJson(r));
+  }
+
+  /// POST /chore_events: [chore] (a [Chore.name]) was done. [when] null = now; [doneBy]
+  /// empty = not recorded.
+  Future<ChoreEvent> addChoreEvent(String chore,
+      {DateTime? when, List<String> doneBy = const [], String notes = ''}) async {
+    final r = await _guard(() => http
+        .post(_uri('/chore_events'),
+            headers: _jsonHeaders,
+            body: jsonEncode({
+              'user': _user,
+              'chore': chore,
+              'event_time': (when ?? DateTime.now()).toUtc().toIso8601String(),
+              'done_by': doneBy,
+              'notes': notes.trim(),
+            }))
+        .timeout(const Duration(seconds: 15)));
+    return ChoreEvent.fromJson(_choreJson(r));
+  }
+
+  /// PATCH /chore_events/{id} with any of chore, event_time (UTC ISO), done_by, notes.
+  Future<ChoreEvent> editChoreEvent(int id, Map<String, dynamic> changes) async {
+    final r = await _guard(() => http
+        .patch(_uri('/chore_events/$id'),
+            headers: _jsonHeaders, body: jsonEncode({...changes, 'user': _user}))
+        .timeout(const Duration(seconds: 15)));
+    return ChoreEvent.fromJson(_choreJson(r));
+  }
+
+  /// DELETE /chore_events/{id}: a soft delete; [restoreChoreEvent] undoes it.
+  Future<ChoreEvent> deleteChoreEvent(int id) async {
+    final r = await _guard(() => http
+        .delete(_uri('/chore_events/$id', _userQuery), headers: _jsonHeaders)
+        .timeout(const Duration(seconds: 15)));
+    return ChoreEvent.fromJson(_choreJson(r));
+  }
+
+  Future<ChoreEvent> restoreChoreEvent(int id) async {
+    final r = await _guard(() => http
+        .post(_uri('/chore_events/$id/restore', _userQuery), headers: _jsonHeaders)
+        .timeout(const Duration(seconds: 15)));
+    return ChoreEvent.fromJson(_choreJson(r));
   }
 
   // ---------- events (server: events_api.py) ----------

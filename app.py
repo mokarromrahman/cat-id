@@ -35,6 +35,8 @@ GET/POST/PATCH/DELETE /vet_visit...  vet visits for the app's Vet tab, see vet_a
 GET  /events     events (filter by cat, type, date range), totals and chart data for the
                  app's Events tab; GET /event_types; GET /picture/{id}/image serves an
                  event's photo. See events_api.py.
+GET/POST/PATCH /chores, GET/POST/PATCH/DELETE /chore_events...  household chores and when
+                 they were done, for the app's Chores page, see chores_api.py. No Discord
 POST /api/retrain  re-run training on data/ and hot-reload the model
 GET  /health     is the model loaded, which classes it knows, how many training
                  photos each class has in data/ (the same ones train.py reads), how
@@ -42,14 +44,21 @@ GET  /health     is the model loaded, which classes it knows, how many training
                  on /label), and which server build this is (the release tag and full
                  commit hash; "dev" and null for a local build), and per litterbox when
                  it was last cleaned and its bag last changed (UTC; null if never;
-                 `litterboxes` is null if the database is down):
+                 `litterboxes` is null if the database is down), and the active chores
+                 with when each was last done and whether it's overdue (`chores`, the same
+                 chore objects as GET /chores; null if the database is down):
                  {"model_loaded": true, "classes": ["Litten", "Shinx", "neither"],
                   "photos": {"Litten": 912, "Shinx": 703, "neither": 42},
                   "waiting_in_inbox": 17, "version": "v0.2.0",
                   "commit": "433c253...",
                   "litterboxes": [{"location": "basement", "name": "Basement",
                                    "last_cleaned": "2026-11-15T15:02:00+00:00",
-                                   "bag_last_changed": null}, ...]}
+                                   "bag_last_changed": null}, ...],
+                  "chores": [{"id": 1, "name": "vacuum", "label_name": "Vacuum",
+                              "warning_threshold_days": 7, "active": true,
+                              "last_done": "2026-11-10T18:00:00+00:00",
+                              "last_done_by": ["Ashley"],
+                              "due_at": "2026-11-17T18:00:00+00:00", "overdue": false}, ...]}
 
 `user` everywhere is a name from app_user (pi, Ashley, Mac); missing or unknown means the
 system user. Database writes never fail a request: if Postgres is down they go to
@@ -71,6 +80,7 @@ import requests
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
+import chores_api
 import db
 import events_api
 import sorter_core
@@ -97,6 +107,7 @@ INBOX.mkdir(exist_ok=True)
 app = FastAPI(title="cat-id")
 app.include_router(vet_api.router)
 app.include_router(events_api.router)
+app.include_router(chores_api.router)
 bundle = None
 model_version = None  # model.joblib's modified time (UTC), stored on each picture row
 
@@ -480,4 +491,5 @@ def health():
         "version": SERVER_VERSION,
         "commit": SERVER_COMMIT,
         "litterboxes": db.litterbox_status(),
+        "chores": db.chore_status(),
     }

@@ -7,6 +7,7 @@ import '../pets/pet_settings.dart';
 import '../pets/pet_settings_sheet.dart';
 import '../server_store.dart';
 import '../who_am_i.dart';
+import 'chores_screen.dart';
 import 'events_screen.dart';
 import 'health_screen.dart';
 import 'identify_screen.dart';
@@ -28,7 +29,16 @@ const List<AppTab> kTabOrder = [
   AppTab.label,
 ];
 
-/// The tabs (Health, Identify, Events, Vet, Label) for the selected server.
+/// Pages in the menu (the ☰ button in the app bar), for things that don't need a tab.
+/// To add one: add it here and to [kMenuOrder], and give it a case in
+/// _HomeScreenState._menuItem and _HomeScreenState._menuPage.
+enum MenuPage { chores }
+
+/// The order of the menu entries, top to bottom.
+const List<MenuPage> kMenuOrder = [MenuPage.chores];
+
+/// The tabs (Health, Identify, Events, Vet, Label) for the selected server, and the menu
+/// (Chores) for pages without a tab.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key, required this.store});
 
@@ -73,6 +83,45 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  /// The menu entry's (icon, label).
+  (IconData, String) _menuItem(MenuPage p) => switch (p) {
+        MenuPage.chores => (Icons.cleaning_services_outlined, 'Chores'),
+      };
+
+  Widget _menuPage(MenuPage p, Server server) => switch (p) {
+        MenuPage.chores => ChoresScreen(store: widget.store, server: server),
+      };
+
+  /// Opens a menu page full screen (with its own back button). Health shows chore
+  /// warnings, so it reloads when you come back.
+  Future<void> _openPage(MenuPage p) async {
+    final server = widget.store.selected!;
+    await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => _menuPage(p, server)));
+    if (!mounted) return;
+    setState(() => _gen[AppTab.health] = _gen[AppTab.health]! + 1);
+  }
+
+  Widget _drawer(Server server) {
+    return NavigationDrawer(
+      selectedIndex: null,
+      onDestinationSelected: (i) {
+        Navigator.of(context).pop(); // close the menu
+        _openPage(kMenuOrder[i]);
+      },
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(28, 16, 16, 10),
+          child: Text(server.label, style: Theme.of(context).textTheme.titleSmall),
+        ),
+        for (final p in kMenuOrder)
+          NavigationDrawerDestination(
+            icon: Icon(_menuItem(p).$1),
+            label: Text(_menuItem(p).$2),
+          ),
+      ],
+    );
+  }
+
   Widget _body(AppTab t, Server server, String tag) {
     if (!_visited.contains(t)) return const SizedBox.shrink();
     switch (t) {
@@ -89,6 +138,7 @@ class _HomeScreenState extends State<HomeScreen> {
           key: ValueKey('health-$tag-${_gen[t]}'),
           server: server,
           onOpenLabel: () => _goTo(AppTab.label),
+          onOpenChores: () => _openPage(MenuPage.chores),
         );
       case AppTab.events:
         return EventsScreen(key: ValueKey('events-$tag'), store: widget.store, server: server);
@@ -178,6 +228,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final tag = '${server.id}-${server.address}';
 
     return Scaffold(
+      drawer: _drawer(server),
       appBar: AppBar(
         title: InkWell(
           onTap: _openServers,

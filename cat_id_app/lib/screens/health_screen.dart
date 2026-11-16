@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../api.dart';
 import '../server_store.dart';
+import 'chores_screen.dart';
 
 /// The "Server version" card's (title, detail) from GET /health's `version` (the release
 /// tag, or "dev" for a local build) and `commit` (full hash; shown shortened).
@@ -31,16 +32,35 @@ String agoText(DateTime when, DateTime now) {
   return d.inDays == 1 ? '1 day ago' : '${d.inDays} days ago';
 }
 
+/// "Today, 9:12 AM", "Yesterday, 11:05 PM" or "Nov 12, 2026, 8:00 AM".
+String dayTimeText(BuildContext context, DateTime when) {
+  final loc = MaterialLocalizations.of(context);
+  final now = DateTime.now();
+  final days = DateTime(now.year, now.month, now.day)
+      .difference(DateTime(when.year, when.month, when.day))
+      .inDays;
+  final day = switch (days) {
+    0 => 'Today',
+    1 => 'Yesterday',
+    _ => loc.formatMediumDate(when),
+  };
+  return '$day, ${loc.formatTimeOfDay(TimeOfDay.fromDateTime(when))}';
+}
+
 /// GET /health: model status, training photos per class, captures waiting in the
-/// inbox, when each litterbox was last cleaned and its bag last changed, and which server
-/// build this is. Also the Retrain button (POST /api/retrain).
+/// inbox, when each litterbox was last cleaned and its bag last changed, which chores are
+/// overdue, and which server build this is. Also the Retrain button (POST /api/retrain).
 class HealthScreen extends StatefulWidget {
-  const HealthScreen({super.key, required this.server, required this.onOpenLabel});
+  const HealthScreen(
+      {super.key, required this.server, required this.onOpenLabel, this.onOpenChores});
 
   final Server server;
 
   /// Switches to the Label tab.
   final VoidCallback onOpenLabel;
+
+  /// Opens the Chores page (the Chores card's button); null = no button.
+  final VoidCallback? onOpenChores;
 
   @override
   State<HealthScreen> createState() => _HealthScreenState();
@@ -119,20 +139,7 @@ class _HealthScreenState extends State<HealthScreen> {
     _load();
   }
 
-  /// "Today, 9:12 AM", "Yesterday, 11:05 PM" or "Nov 12, 2026, 8:00 AM".
-  String _dayTime(DateTime when) {
-    final loc = MaterialLocalizations.of(context);
-    final now = DateTime.now();
-    final days = DateTime(now.year, now.month, now.day)
-        .difference(DateTime(when.year, when.month, when.day))
-        .inDays;
-    final day = switch (days) {
-      0 => 'Today',
-      1 => 'Yesterday',
-      _ => loc.formatMediumDate(when),
-    };
-    return '$day, ${loc.formatTimeOfDay(TimeOfDay.fromDateTime(when))}';
-  }
+  String _dayTime(DateTime when) => dayTimeText(context, when);
 
   /// One section per litterbox: when it was last cleaned (highlighted when overdue, see
   /// [kCleanOverdueAfter]) and when its bag was last changed.
@@ -187,6 +194,63 @@ class _HealthScreenState extends State<HealthScreen> {
     );
   }
 
+  /// The overdue chores (see Chore.overdue), longest overdue first, or "Nothing overdue".
+  Widget _choreCard(bool dbDown, List<Chore> chores, ThemeData theme) {
+    final now = DateTime.now();
+    final scheme = theme.colorScheme;
+    final overdue = sortChores(chores).where((c) => c.overdue).toList();
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 16, 8, 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(child: Text('Chores', style: theme.textTheme.titleMedium)),
+                if (widget.onOpenChores != null)
+                  TextButton(onPressed: widget.onOpenChores, child: const Text('Open')),
+              ],
+            ),
+            if (dbDown)
+              const Text("The server's database isn't reachable right now.")
+            else if (overdue.isEmpty)
+              const Row(
+                children: [
+                  Icon(Icons.check_circle_outline, size: 20, color: Colors.greenAccent),
+                  SizedBox(width: 8),
+                  Text('Nothing overdue'),
+                ],
+              )
+            else
+              for (final (i, c) in overdue.indexed) ...[
+                if (i > 0) const Divider(),
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                              child: Text(c.label,
+                                  style: theme.textTheme.titleSmall?.copyWith(color: scheme.error))),
+                          Icon(Icons.warning_amber, size: 20, color: scheme.error),
+                        ],
+                      ),
+                      const SizedBox(height: 2),
+                      Text(choreDueText(c, now), style: TextStyle(color: scheme.error)),
+                      Text(lastDoneText(context, c, now)),
+                    ],
+                  ),
+                ),
+              ],
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final data = _data;
@@ -234,6 +298,11 @@ class _HealthScreenState extends State<HealthScreen> {
     final litterboxes = [
       for (final l in (data['litterboxes'] as List?) ?? const [])
         LitterboxStatus.fromJson(l as Map<String, dynamic>)
+    ];
+    // Same for `chores` (older servers: no card; null: database down).
+    final hasChores = data.containsKey('chores');
+    final chores = [
+      for (final c in (data['chores'] as List?) ?? const []) Chore.fromJson(c as Map<String, dynamic>)
     ];
 
     return [
@@ -292,6 +361,7 @@ class _HealthScreenState extends State<HealthScreen> {
         ),
       ),
       if (hasLitterboxes) _litterboxCard(data['litterboxes'] == null, litterboxes, theme),
+      if (hasChores) _choreCard(data['chores'] == null, chores, theme),
       Card(
         child: ListTile(
           leading: const Icon(Icons.dns_outlined),

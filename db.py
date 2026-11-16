@@ -13,6 +13,10 @@ Tables (every one also has created_on, modified_by, modified_on):
               the display label)
   litterbox_clean_event  a litterbox was cleaned (POST /litterbox_clean), and whether the
               bag was changed; not tied to a cat
+  chore       household chores (name is the code, label_name the display label) and how many
+              days may pass before one counts as overdue (warning_threshold_days; null = never)
+  chore_event a chore was done (chores_api.py); soft-deleted with deleted_on
+  chore_event_doer  who did it: one row per person per chore_event (none = not recorded)
 View active_vet_visit is vet_visit without the soft-deleted rows.
 
 The schema itself is created by Alembic (migrations/). The models here must match it;
@@ -26,13 +30,13 @@ import json
 import os
 import threading
 import time as _time
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 
 from sqlalchemy import (
     REAL, Boolean, CheckConstraint, Date, DateTime, FetchedValue, ForeignKey, Identity, Index, Integer,
-    Numeric, Text, Time, create_engine, delete, func, or_, select, text,
+    Numeric, Text, Time, UniqueConstraint, create_engine, delete, func, or_, select, text,
 )
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.dialects.postgresql import ARRAY
@@ -79,6 +83,9 @@ class AppUser(Audit, Base):
     __tablename__ = "app_user"
     id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
     name: Mapped[str] = mapped_column(Text, unique=True)
+    # A person (Ashley, Mac, a cleaner ...), not a system or device (system, pi). Only people
+    # can be picked as who did a chore.
+    human: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
 
 
 class Cat(Audit, Base):
@@ -188,6 +195,42 @@ class LitterboxCleanEvent(Audit, Base):
     reporter_id: Mapped[int] = mapped_column(ForeignKey("app_user.id", ondelete="RESTRICT"))
     bag_changed: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
     notes: Mapped[str | None] = mapped_column(Text)
+
+
+class Chore(Audit, Base):
+    __tablename__ = "chore"
+    __table_args__ = (
+        CheckConstraint("name ~ '^[a-z0-9_]+$'", name="chore_name_code"),
+        CheckConstraint("warning_threshold_days > 0", name="chore_warning_threshold_positive"),
+    )
+    id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
+    name: Mapped[str] = mapped_column(Text, unique=True)    # code: vacuum, cat_food_pickup
+    label_name: Mapped[str] = mapped_column(Text)            # display: Vacuum, Cat Food Pickup
+    # Overdue when more than this many days (x 24 h) have passed since it was last done, or
+    # it was never done. None: no reminder.
+    warning_threshold_days: Mapped[int | None] = mapped_column(Integer)
+    # False hides the chore (a chore with events can't be deleted).
+    active: Mapped[bool] = mapped_column(Boolean, server_default=text("true"))
+
+
+class ChoreEvent(Audit, Base):
+    __tablename__ = "chore_event"
+    __table_args__ = (Index("ix_chore_event_chore_id_event_timestamp", "chore_id", "event_timestamp"),)
+    id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
+    chore_id: Mapped[int] = mapped_column(ForeignKey("chore.id", ondelete="RESTRICT"))
+    event_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    reporter_id: Mapped[int] = mapped_column(ForeignKey("app_user.id", ondelete="RESTRICT"))
+    notes: Mapped[str | None] = mapped_column(Text)
+    deleted_on: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ChoreEventDoer(Audit, Base):
+    """Who did a chore: one row per person (app_user with human = true) per chore_event."""
+    __tablename__ = "chore_event_doer"
+    __table_args__ = (UniqueConstraint("chore_event_id", "app_user_id", name="uq_chore_event_doer"),)
+    id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
+    chore_event_id: Mapped[int] = mapped_column(ForeignKey("chore_event.id", ondelete="CASCADE"))
+    app_user_id: Mapped[int] = mapped_column(ForeignKey("app_user.id", ondelete="RESTRICT"))
 
 
 # ---------- connection ----------
@@ -368,10 +411,63 @@ def litterbox_status():
         rows = s.execute(
             select(Location.name, Location.label_name, last.c.cleaned, last.c.bag)
             .outerjoin(last, last.c.location_id == Location.id).order_by(Location.id))
-        iso = lambda t: t.astimezone(timezone.utc).isoformat() if t else None
-        return [{"location": n, "name": l, "last_cleaned": iso(c), "bag_last_changed": iso(b)}
+        return [{"location": n, "name": l, "last_cleaned": _iso(c), "bag_last_changed": _iso(b)}
                 for n, l, c, b in rows]
     return safe_read(read, None)
+
+
+def _iso(t):
+    return t.astimezone(timezone.utc).isoformat() if t else None
+
+
+def chore_rows(session, include_inactive: bool = False, now: datetime | None = None) -> list[dict]:
+    """Each chore (id order) with when it was last done and by whom (soft-deleted events
+    don't count), when it's due and whether it's overdue (more than warning_threshold_days
+    x 24 h since it was last done, or never done; never overdue without a threshold)."""
+    now = now or utcnow()
+    live = ChoreEvent.deleted_on.is_(None)
+    # The newest live event per chore (DISTINCT ON keeps the first row of each chore).
+    latest = (select(ChoreEvent.chore_id, ChoreEvent.id, ChoreEvent.event_timestamp)
+              .where(live).distinct(ChoreEvent.chore_id)
+              .order_by(ChoreEvent.chore_id, ChoreEvent.event_timestamp.desc(),
+                        ChoreEvent.id.desc()).subquery())
+    q = (select(Chore, latest.c.id, latest.c.event_timestamp)
+         .outerjoin(latest, latest.c.chore_id == Chore.id).order_by(Chore.id))
+    if not include_inactive:
+        q = q.where(Chore.active)
+    rows = session.execute(q).all()
+    doers = chore_doers(session, [eid for _, eid, _ in rows if eid is not None])
+    out = []
+    for c, eid, last in rows:
+        days = c.warning_threshold_days
+        due = last + timedelta(days=days) if days and last else None
+        out.append({
+            "id": c.id, "name": c.name, "label_name": c.label_name,
+            "warning_threshold_days": days, "active": c.active,
+            "last_done": _iso(last), "last_done_by": doers.get(eid, []),
+            "due_at": _iso(due),
+            "overdue": bool(days) and (last is None or now > due),
+        })
+    return out
+
+
+def chore_doers(session, event_ids) -> dict:
+    """{chore_event id: [person names, alphabetical]}."""
+    if not event_ids:
+        return {}
+    found = {}
+    for eid, name in session.execute(
+            select(ChoreEventDoer.chore_event_id, AppUser.name)
+            .join(AppUser, AppUser.id == ChoreEventDoer.app_user_id)
+            .where(ChoreEventDoer.chore_event_id.in_(event_ids)).order_by(AppUser.name)):
+        found.setdefault(eid, []).append(name)
+    return found
+
+
+def chore_status():
+    """For GET /health: the active chores (see chore_rows). None if the database can't be
+    reached."""
+    return safe_read(chore_rows, None)
 
 
 def picture_sources(names: list[str]) -> dict:

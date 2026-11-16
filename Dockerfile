@@ -8,7 +8,7 @@ ENV PYTHONUNBUFFERED=1 HF_HOME=/app/hf_cache
 ENV PYTHONTZPATH=
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY embed.py train.py app.py sorter_core.py db.py vet_api.py events_api.py start.py replay_db_failed.py alembic.ini ./
+COPY embed.py train.py app.py sorter_core.py db.py vet_api.py events_api.py chores_api.py start.py replay_db_failed.py alembic.ini ./
 COPY migrations ./migrations
 COPY ui ./ui
 COPY img_src ./img_src
