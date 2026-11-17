@@ -31,12 +31,15 @@ const List<AppTab> kTabOrder = [
 ];
 
 /// Pages in the menu (the ☰ button in the app bar), for things that don't need a tab.
-/// To add one: add it here and to [kMenuOrder], and give it a case in
+/// To add one: add it here and to [kMenuOrder] (or [kMenuBottom]), and give it a case in
 /// _HomeScreenState._menuItem and _HomeScreenState._menuPage.
 enum MenuPage { chores, settings }
 
-/// The order of the menu entries, top to bottom.
-const List<MenuPage> kMenuOrder = [MenuPage.chores, MenuPage.settings];
+/// The order of the menu entries at the top, top to bottom.
+const List<MenuPage> kMenuOrder = [MenuPage.chores];
+
+/// Entries kept at the bottom of the menu, top to bottom.
+const List<MenuPage> kMenuBottom = [MenuPage.settings];
 
 /// The tabs (Health, Identify, Events, Vet, Label) for the selected server, and the menu
 /// (Chores, Settings) for pages without a tab.
@@ -109,24 +112,49 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  /// One menu entry, styled like a navigation drawer destination.
+  Widget _menuTile(MenuPage p) {
+    final (icon, label) = _menuItem(p);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      child: ListTile(
+        shape: const StadiumBorder(),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+        minTileHeight: 56,
+        leading: Icon(icon),
+        title: Text(label),
+        onTap: () {
+          Navigator.of(context).pop(); // close the menu
+          _openPage(p);
+        },
+      ),
+    );
+  }
+
+  /// The ☰ menu: the server's name, the [kMenuOrder] pages at the top and the
+  /// [kMenuBottom] pages (Settings) stuck to the bottom.
   Widget _drawer(Server server) {
-    return NavigationDrawer(
-      selectedIndex: null,
-      onDestinationSelected: (i) {
-        Navigator.of(context).pop(); // close the menu
-        _openPage(kMenuOrder[i]);
-      },
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(28, 16, 16, 10),
-          child: Text(server.label, style: Theme.of(context).textTheme.titleSmall),
+    return Drawer(
+      child: SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(28, 16, 16, 10),
+              child: Text(server.label, style: Theme.of(context).textTheme.titleSmall),
+            ),
+            Expanded(
+              child: ListView(
+                padding: EdgeInsets.zero,
+                children: [for (final p in kMenuOrder) _menuTile(p)],
+              ),
+            ),
+            const Divider(indent: 28, endIndent: 28),
+            for (final p in kMenuBottom) _menuTile(p),
+            const SizedBox(height: 12),
+          ],
         ),
-        for (final p in kMenuOrder)
-          NavigationDrawerDestination(
-            icon: Icon(_menuItem(p).$1),
-            label: Text(_menuItem(p).$2),
-          ),
-      ],
+      ),
     );
   }
 

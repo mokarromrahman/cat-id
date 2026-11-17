@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:cat_id_app/api.dart';
 import 'package:cat_id_app/app_update.dart';
 import 'package:cat_id_app/screens/health_screen.dart';
+import 'package:cat_id_app/screens/home_screen.dart';
 import 'package:cat_id_app/screens/settings_screen.dart';
 import 'package:cat_id_app/server_store.dart';
 import 'package:cat_id_app/who_am_i.dart';
@@ -98,6 +99,13 @@ Future<void> _settleIo(WidgetTester tester) async {
     await tester.pump();
   }
   await tester.pumpAndSettle();
+}
+
+/// Lets animations run for a second, for screens that never settle (the walking cats).
+Future<void> _frames(WidgetTester tester) async {
+  for (var i = 0; i < 10; i++) {
+    await tester.pump(const Duration(milliseconds: 100));
+  }
 }
 
 final _updateButton = find.widgetWithText(FilledButton, 'Update to v1.4.4');
@@ -290,6 +298,26 @@ void main() {
         expect(installer.installs, isEmpty);
       }, () => fakeServer(appUpdate: {'release': info('v1.4.4'), 'prerelease': null}));
     });
+  });
+
+  testWidgets('the menu has Chores at the top and Settings at the bottom', (tester) async {
+    tester.view.physicalSize = const Size(412, 915);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final store = await _store();
+    await http.runWithClient(() async {
+      await tester.pumpWidget(MaterialApp(home: HomeScreen(store: store)));
+      await _frames(tester); // the walking cats never stop moving
+      await tester.tap(find.byTooltip('Open navigation menu'));
+      await _frames(tester); // the walking cats never stop moving
+      final chores = tester.getRect(find.text('Chores'));
+      final settings = tester.getRect(find.text('Settings'));
+      expect(chores.top, lessThan(200));
+      expect(settings.bottom, greaterThan(915 - 100));
+      await tester.tap(find.text('Settings'));
+      await _frames(tester); // the walking cats never stop moving
+      expect(find.byType(SettingsScreen), findsOneWidget);
+    }, () => fakeServer(appUpdate: {'release': null, 'prerelease': null}));
   });
 
   group('Settings page', () {
