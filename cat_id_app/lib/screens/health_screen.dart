@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api.dart';
+import '../app_update.dart';
 import '../server_store.dart';
 import 'chores_screen.dart';
 
@@ -49,12 +50,21 @@ String dayTimeText(BuildContext context, DateTime when) {
 
 /// GET /health: model status, training photos per class, captures waiting in the
 /// inbox, when each litterbox was last cleaned and its bag last changed, which chores are
-/// overdue, and which server build this is. Also the Retrain button (POST /api/retrain).
+/// overdue, and which server build this is. Also the Retrain button (POST /api/retrain),
+/// and at the top an Update button, only when the server has a newer full release of the
+/// app (GET /app_update, see app_update.dart).
 class HealthScreen extends StatefulWidget {
   const HealthScreen(
-      {super.key, required this.server, required this.onOpenLabel, this.onOpenChores});
+      {super.key,
+      required this.server,
+      required this.onOpenLabel,
+      this.onOpenChores,
+      this.store});
 
   final Server server;
+
+  /// For the server's API key (GET /app_update needs it); null = no key.
+  final ServerStore? store;
 
   /// Switches to the Label tab.
   final VoidCallback onOpenLabel;
@@ -72,6 +82,13 @@ class _HealthScreenState extends State<HealthScreen> {
   bool _loading = false;
   bool _retraining = false;
 
+  /// The newer release to offer (the Update button), or null: none, a dev build, an older
+  /// server without /app_update, or the check failed.
+  AppUpdateInfo? _update;
+
+  /// With the API key, for the update check and download.
+  CatApi? _keyedApi;
+
   CatApi get _api => CatApi(widget.server, '');
 
   @override
@@ -80,11 +97,26 @@ class _HealthScreenState extends State<HealthScreen> {
     _load();
   }
 
+  /// Looks for a newer release. Any problem just means no button.
+  Future<void> _loadUpdate() async {
+    if (isDevBuild) return;
+    AppUpdateInfo? offer;
+    try {
+      final key = await widget.store?.keyFor(widget.server.id) ?? '';
+      final api = _keyedApi = CatApi(widget.server, key);
+      offer = healthUpdateOffer(await api.appUpdates());
+    } catch (_) {
+      offer = null;
+    }
+    if (mounted) setState(() => _update = offer);
+  }
+
   Future<void> _load() async {
     setState(() {
       _loading = true;
       _error = null;
     });
+    final update = _loadUpdate();
     try {
       final d = await _api.health();
       if (!mounted) return;
@@ -102,6 +134,7 @@ class _HealthScreenState extends State<HealthScreen> {
         _error = 'Something went wrong: $e';
       });
     } finally {
+      await update;
       if (mounted) setState(() => _loading = false);
     }
   }
@@ -285,6 +318,15 @@ class _HealthScreenState extends State<HealthScreen> {
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.all(16),
         children: [
+          if (_update != null && _keyedApi != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: FilledButton.icon(
+                icon: const Icon(Icons.system_update),
+                label: Text('Update to ${_update!.version}'),
+                onPressed: () => startAppUpdate(context, _keyedApi!, _update!),
+              ),
+            ),
           if (_loading && data == null) const Center(child: CircularProgressIndicator()),
           if (_error != null)
             Card(

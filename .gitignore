@@ -225,3 +225,4 @@ hf_cache/
 inbox/
 model.joblib
 .DS_Store
+app_updates/

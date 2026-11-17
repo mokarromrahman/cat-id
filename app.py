@@ -42,6 +42,9 @@ GET/POST/PATCH /chores, GET/POST/PATCH/DELETE /chore_events..., GET/POST/PATCH
                  chores_api.py. Requests, Dones, cancellations, starts and stops post to the
                  chores Discord channel (CHORES_DISCORD_WEBHOOK_URL; skipped if not set), see
                  chore_discord.py
+GET  /app_update  the newest app APK the server has, per channel (release / prerelease),
+                 for the app's Update button; GET /app_update/{channel}/apk downloads it.
+                 deploy.yml puts them in app_updates/. See app_update_api.py.
 POST /api/retrain  re-run training on data/ and hot-reload the model
 GET  /health     is the model loaded, which classes it knows, how many training
                  photos each class has in data/ (the same ones train.py reads), how
@@ -86,6 +89,7 @@ import requests
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
+import app_update_api
 import chores_api
 import db
 import events_api
@@ -114,6 +118,7 @@ app = FastAPI(title="cat-id")
 app.include_router(vet_api.router)
 app.include_router(events_api.router)
 app.include_router(chores_api.router)
+app.include_router(app_update_api.router)
 bundle = None
 model_version = None  # model.joblib's modified time (UTC), stored on each picture row
 

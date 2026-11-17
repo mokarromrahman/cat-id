@@ -13,6 +13,7 @@ import 'health_screen.dart';
 import 'identify_screen.dart';
 import 'label_screen.dart';
 import 'servers_screen.dart';
+import 'settings_screen.dart';
 import 'vet_screen.dart';
 
 /// Cough has no tab of its own: the Events tab's "Add event" menu opens the cough or
@@ -32,13 +33,13 @@ const List<AppTab> kTabOrder = [
 /// Pages in the menu (the ☰ button in the app bar), for things that don't need a tab.
 /// To add one: add it here and to [kMenuOrder], and give it a case in
 /// _HomeScreenState._menuItem and _HomeScreenState._menuPage.
-enum MenuPage { chores }
+enum MenuPage { chores, settings }
 
 /// The order of the menu entries, top to bottom.
-const List<MenuPage> kMenuOrder = [MenuPage.chores];
+const List<MenuPage> kMenuOrder = [MenuPage.chores, MenuPage.settings];
 
 /// The tabs (Health, Identify, Events, Vet, Label) for the selected server, and the menu
-/// (Chores) for pages without a tab.
+/// (Chores, Settings) for pages without a tab.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key, required this.store});
 
@@ -86,19 +87,26 @@ class _HomeScreenState extends State<HomeScreen> {
   /// The menu entry's (icon, label).
   (IconData, String) _menuItem(MenuPage p) => switch (p) {
         MenuPage.chores => (Icons.cleaning_services_outlined, 'Chores'),
+        MenuPage.settings => (Icons.settings_outlined, 'Settings'),
       };
 
   Widget _menuPage(MenuPage p, Server server) => switch (p) {
         MenuPage.chores => ChoresScreen(store: widget.store, server: server),
+        MenuPage.settings => SettingsScreen(store: widget.store),
       };
 
   /// Opens a menu page full screen (with its own back button). Health shows chore
-  /// warnings, so it reloads when you come back.
+  /// warnings, so it reloads when you come back; Label reloads if Who am I was changed
+  /// (on Settings), since its address carries the name.
   Future<void> _openPage(MenuPage p) async {
     final server = widget.store.selected!;
+    final who = WhoAmI.current;
     await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => _menuPage(p, server)));
     if (!mounted) return;
-    setState(() => _gen[AppTab.health] = _gen[AppTab.health]! + 1);
+    setState(() {
+      _gen[AppTab.health] = _gen[AppTab.health]! + 1;
+      if (WhoAmI.current != who) _gen[AppTab.label] = _gen[AppTab.label]! + 1;
+    });
   }
 
   Widget _drawer(Server server) {
@@ -137,6 +145,7 @@ class _HomeScreenState extends State<HomeScreen> {
         return HealthScreen(
           key: ValueKey('health-$tag-${_gen[t]}'),
           server: server,
+          store: widget.store,
           onOpenLabel: () => _goTo(AppTab.label),
           onOpenChores: () => _openPage(MenuPage.chores),
         );

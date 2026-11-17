@@ -157,8 +157,8 @@ Chore _c(Map<String, dynamic> j) => Chore.fromJson(j);
 void main() {
   WidgetController.hitTestWarningShouldBeFatal = true;
 
-  test('the menu lists Chores', () {
-    expect(kMenuOrder, [MenuPage.chores]);
+  test('the menu lists Chores, then Settings', () {
+    expect(kMenuOrder, [MenuPage.chores, MenuPage.settings]);
   });
 
   group('chore text', () {

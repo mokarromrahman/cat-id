@@ -1,8 +1,10 @@
 # Runs on its own whenever you push a version tag:
 #     git tag v0.2.0 && git push origin v0.2.0
-# 1. pytest  2. build the server image and push it to ghcr.io  3. create the GitHub Release.
-# The APK (apk.yml) and the server deploy (deploy.yml) are separate, optional buttons
-# you press afterwards from the Actions tab.
+# 1. pytest  2. build the server image and push it to ghcr.io  3. create the GitHub Release
+# 4. build the APK and attach it (apk.yml)  5. deploy to the server (deploy.yml), only once
+# the APK is built: the deploy also puts the APK on the server for the app's Update button,
+# so the server and the app it offers always move together. A failed APK build stops the
+# deploy. Both can also be run by hand from the Actions tab.
 name: Release (tests + server image)
 
 on:
@@ -94,7 +96,7 @@ jobs:
           prerelease: ${{ contains(github.ref_name, '-') }}
           body: |
             Server image: `ghcr.io/${{ github.repository }}:${{ github.ref_name }}` (without the `v`)
-            Android APK: attached below once the "Build APK" workflow has been run for this tag.
+            Android APK: attached below once the "Build APK" job has finished.
 
   apk:
     needs: release
@@ -104,7 +106,8 @@ jobs:
     secrets: inherit
 
   deploy:
-    needs: release
+    # Waits for the APK: deploy.yml copies it to the server for the app's Update button.
+    needs: [release, apk]
     uses: ./.github/workflows/deploy.yml
     with:
       tag: ${{ github.ref_name }}

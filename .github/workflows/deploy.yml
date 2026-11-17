@@ -1,10 +1,13 @@
 # Optional. Run it by hand from Actions -> "Deploy server" -> Run workflow, and type the tag
 # (e.g. v0.2.0) once "Release" has finished for it. Or:  gh workflow run deploy.yml -f tag=v0.2.0
 # Runs on the self-hosted runner on the Ubuntu server (label "home"): pulls that version's
-# image from ghcr.io and restarts the cat-id container. The db container and its data,
-# .env, data/, inbox/, model.joblib and hf_cache/ on the server are left as they are.
+# image from ghcr.io, puts that version's APK and release notes in app_updates/ for the
+# app's Update button (deploy_app_update.py; fails if the Release has no APK) and restarts
+# the cat-id container. The db container and its data, .env, data/, inbox/, model.joblib
+# and hf_cache/ on the server are left as they are.
 # start.py runs the Alembic migrations when the new container starts.
-# To roll back, run it again with the older tag.
+# To roll back, run it again with the older tag (the older APK is then offered, but phones
+# already on a newer version don't go back down).
 name: Deploy server
 
 on:
@@ -20,7 +23,7 @@ on:
         required: true
 
 permissions:
-  contents: read
+  contents: read    # read the Release and its APK (works on a private repo)
   packages: read    # pull the image from ghcr.io
 
 
@@ -40,12 +43,21 @@ jobs:
           [[ "${{ inputs.tag }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "::error::Tag must look like v1.2.3 or v1.2.3-name"; exit 1; }
           [ -n "$DEPLOY_DIR" ] && [ -f "$DEPLOY_DIR/.env" ] || { echo "::error::Set the DEPLOY_DIR repo variable to the folder with .env"; exit 1; }
 
-      # The tag's docker-compose.yml, so compose changes ship with the version.
+      # The tag's docker-compose.yml, so compose changes ship with the version, and the
+      # script that fetches the APK.
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.tag }}
-          sparse-checkout: docker-compose.yml
+          sparse-checkout: |
+            docker-compose.yml
+            deploy_app_update.py
           sparse-checkout-cone-mode: false
+
+      # Before the restart, so the new server starts with its own version's APK on offer.
+      - name: Put the APK on the server for the app's Update button
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 "$GITHUB_WORKSPACE/deploy_app_update.py" "${{ inputs.tag }}" "${{ github.repository }}" "$DEPLOY_DIR"
 
       - uses: docker/login-action@v3
         with:

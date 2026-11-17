@@ -26,6 +26,8 @@ https://cat-id.<tailnet>.ts.net, only the owner's and Ashley's phones, only port
 | `vet_api.py` | `/vet_visit` routes (APIRouter included by `app.py`). |
 | `events_api.py` | `/events`, `/event_types`, `/picture/{id}/image` for the app's Events tab (APIRouter included by `app.py`). |
 | `chores_api.py` | `/chores`, `/chore_events`, `/chore_requests`, `/chore_starts` for the app's Chores page (APIRouter included by `app.py`). |
+| `app_update_api.py` | `/app_update` routes (APIRouter included by `app.py`): the app's update APKs from `app_updates/`. |
+| `deploy_app_update.py` | Run by `deploy.yml` on the server before the restart: downloads the tag's APK and release notes from its GitHub Release (with the workflow's `GITHUB_TOKEN`, so it works on a private repo) into `app_updates/<release|prerelease>/` (`cat-id.apk` + `info.json`: version, notes, sha256, published_at), replacing the channel's previous one. Channel `prerelease` for tags with a dash. Fails the deploy if the Release has no APK. Stdlib only, Python 3.8+. |
 | `chore_discord.py` | Chores Discord channel (`CHORES_DISCORD_WEBHOOK_URL`): request and start posts and their edits, "done"/"cancelled"/"needed again"/"stopped" messages. Background tasks from `chores_api.py`. |
 | `alembic.ini`, `migrations/` | Alembic. `0001_initial_schema.py`: tables, CHECKs, audit trigger, `active_vet_visit` view, seed rows. `0002_location_and_litterbox_clean.py`: `location`, `litterbox_clean_event`, `location_id` on `picture`/`event`, backfill of the Pi's photos to basement. `0003_chores.py`: `chore`, `chore_event`, `chore_event_doer`, `app_user.human`, seed chores. `0004_chore_requests.py`: `chore_request` (partial unique index: one open per chore). `0005_chore_starts.py`: `chore_start`, `chore_start_doer`, `chore_event.started_on` (CHECK `started_on <= event_timestamp`). |
 | `start.py` | Container entry point: waits up to 30 s for Postgres, runs `alembic upgrade head`, then starts uvicorn either way. |
@@ -38,9 +40,15 @@ https://cat-id.<tailnet>.ts.net, only the owner's and Ashley's phones, only port
 | `phone_control.py` | `PhoneController` (pure-python-adb): wake screen, take photo, fetch newest file from `/sdcard/DCIM/Camera/`. Needs an `adb` server running on the Pi. |
 | `pi_requirements.txt` | Pi-only deps: pure-python-adb, gpiozero, lgpio, requests, python-dotenv |
 | `cat_id_app/` | Flutter Android app (see below). Excluded in `.dockerignore`. Walking-cat sprites in `cat_id_app/assets/sprites/` (`tool/fetch_sprites.py`). |
-| `Dockerfile`, `docker-compose.yml` | `python:3.14-slim`; bind mounts for `data/`, `inbox/`, `model.joblib`, `embeddings_cache.npz`, `hf_cache/`; `db` Postgres 18 service; `tailscale` sidecar (cat-id uses its network, so port 8000 is published on it; Serve config inline under `configs:` because `deploy.yml` checks out only the compose file; login kept in the `tailscale-state` volume; `TS_AUTHKEY` in `.env` for the first start). |
+| `Dockerfile`, `docker-compose.yml` | `python:3.14-slim`; bind mounts for `data/`, `inbox/`, `model.joblib`, `embeddings_cache.npz`, `hf_cache/`, `app_updates/` (read-only); `db` Postgres 18 service; `tailscale` sidecar (cat-id uses its network, so port 8000 is published on it; Serve config inline under `configs:` because `deploy.yml` checks out only the compose file; login kept in the `tailscale-state` volume; `TS_AUTHKEY` in `.env` for the first start). |
 
-Not in git: `data/`, `inbox/`, `model.joblib`, `embeddings_cache.npz`, `hf_cache/`, `.env`.
+Not in git: `data/`, `inbox/`, `model.joblib`, `embeddings_cache.npz`, `hf_cache/`, `app_updates/`, `.env`.
+
+Release pipeline (`.github/workflows/`): a `v*` tag runs `release.yml`: pytest, server image
+to ghcr.io, GitHub Release, then the APK (`apk.yml`, built with
+`--dart-define=CAT_ID_VERSION=<tag>`), then, only once the APK is built, the deploy
+(`deploy.yml` on the self-hosted runner: `deploy_app_update.py`, pull, restart). A failed APK
+build stops the deploy, so the server and the APK it offers always match.
 
 ## Server endpoints (`app.py`)
 
@@ -104,6 +112,10 @@ Not in git: `data/`, `inbox/`, `model.joblib`, `embeddings_cache.npz`, `hf_cache
   (editing a start's people) posts nothing.
   Webhooks can edit their own messages but can't add reactions, so ✅ is in the text. Times
   use Discord's `<t:unix:f>` markup (each reader's own time zone).
+- `GET /app_update` (key in `X-API-Key`): `{release, prerelease}`, each `{version, notes,
+  sha256, size, published_at}` or null (nothing deployed for that channel, or a file missing).
+  `GET /app_update/{release|prerelease}/apk`: the APK (404 if none). No database. See
+  `app_update_api.py`. Not in `/health` on purpose: `/health` has no key check.
 - `GET /health`: `{model_loaded, classes, photos: {class: count}, waiting_in_inbox, version,
   commit, litterboxes, chores}`. `litterboxes`: per location `{location, name, last_cleaned,
   bag_last_changed}` (UTC, null if never), or null if the DB is down (`db.litterbox_status()`).
@@ -121,8 +133,8 @@ Not in git: `data/`, `inbox/`, `model.joblib`, `embeddings_cache.npz`, `hf_cache
   `inbox/_both`; Done/Skip goes to `inbox/_archived`; Delete really deletes (undoable in-session).
   Use `shutil.move`, not `Path.rename` (separate Docker bind mounts). The label buttons come from
   the folders in `data/`.
-- `/identify`, `/litterbox`, `/litterbox_clean`, `/cough`, `/vet_visit`, `/events`, `/event_types`, `/chores`, `/chore_events` and
-  `/picture/{id}/image` check `API_KEY`. `/label` and its
+- `/identify`, `/litterbox`, `/litterbox_clean`, `/cough`, `/vet_visit`, `/events`, `/event_types`, `/chores`, `/chore_events`,
+  `/app_update` and `/picture/{id}/image` check `API_KEY`. `/label` and its
   `/api/*` routes don't, on purpose (owner's choice): anyone on the home network can label.
 
 ## Database (Postgres 18, SQLAlchemy 2 sync + Alembic, psycopg 3)
@@ -227,7 +239,8 @@ Flutter, Android only, sideloaded (not on the Play Store). Tabs, in `kTabOrder` 
 `lib/screens/home_screen.dart`: Health, Identify, Events, Vet, Label. Pages that don't need a
 tab go in the ☰ menu (a `NavigationDrawer`): `MenuPage` / `kMenuOrder` in `home_screen.dart`
 (add the enum value, then its case in `_menuItem` and `_menuPage`); they open full screen
-with a back button, and Health reloads when you come back. Today: Chores. Cough has no tab: the
+with a back button, and Health reloads when you come back (and Label, if Who am I was
+changed). Today: Chores, Settings. Cough has no tab: the
 Events tab's Add event menu (Litterbox / Cough / Clean Litterbox) opens `ReportEventScreen`
 (`screens/report_event_screen.dart`, `ReportKind`) in a sheet: cat, When (date then time
 picker; default "Now", any past date, not the future; sent as `event_time` in UTC), note,
@@ -275,6 +288,26 @@ to Add event > Litterbox).
   servers without `chores`). A Litterboxes card per location: "Last cleaned <day, time> (<ago>)", red with a
   warning icon when over 24 h or never (`kCleanOverdueAfter`), and "Bag was last changed <day,
   time>" (no highlight). Hidden for servers without `litterboxes`.
+- In-app updates (`lib/app_update.dart`): the app knows its version from
+  `--dart-define=CAT_ID_VERSION` (`installedAppVersion`; empty = a dev build, e.g. `flutter
+  run`). Health shows an "Update to vX.Y.Z" button at the top only when GET `/app_update` has
+  a newer full release (`healthUpdateOffer`; never a prerelease, never on a dev build, nothing
+  on an older server or an error). `AppVersion` orders like semver (1.5.0-test < 1.5.0).
+  `startAppUpdate`: what's new dialog (notes, size; Not now / Update), then once per phone
+  "Allow from this source" (explains, opens Android's setting, rechecks on return), then the
+  download with a progress bar (size checked), then Android's install screen. Android closes
+  the app when it's installed; it doesn't reopen by itself. Installing is our own Kotlin
+  (`android/.../AppInstaller.kt`, channel `cat_id/app_installer`, wired in `MainActivity.kt`):
+  checks the SHA-256, installs through a `PackageInstaller` session and reports installed /
+  cancelled / why it failed (e.g. `conflict` = signed with another key). Needs
+  `REQUEST_INSTALL_PACKAGES` in the manifest. Tests swap `ApkInstaller.instance`.
+- Settings page (`screens/settings_screen.dart`, menu > Settings): app version (or "This is a
+  dev build" with "Install latest release") and server version; Updates: up to date / update
+  available, "Show prereleases" (per phone, `UpdatePrefs`, off by default; the prerelease is
+  offered only here, and only if newer than both the installed app and the full release);
+  then copies of Who am I, Walking cats (`PetSettingsControls`, shared with the paw button's
+  sheet) and the saved servers (tap to select, "Manage servers" opens the Servers screen).
+  The originals (app bar, paw button, Servers screen) stay; both change the same settings.
 - Label tab is a WebView of the server's `/label`. Health and Label reload each time you
   switch to them; Identify, Events and Vet keep their state (Events: pull down to refresh).
 - Events tab (`screens/events_screen.dart`), view only. Filters, one value each: cat (Both /
@@ -322,11 +355,15 @@ to Add event > Litterbox).
   `editChoreStart`, `stopChoreStart` (`addChoreEvent` takes `startedAt`).
 - Tests: `flutter test` (`test/vet_screen_test.dart`, `test/events_screen_test.dart`,
   `test/chores_screen_test.dart` and `test/health_screen_test.dart` drive the Vet, Events,
-  Chores and Health screens against a fake server;
+  Chores and Health screens against a fake server; `test/app_update_test.dart` covers version
+  order, what is offered where, the Health button's show/hide cases, a download + install
+  against a fake installer, and the Settings page;
   `test/pets/` covers the cats' state machine, sprite sheets and assets, taps, Identify hops,
   after-form reactions and settings; `events_screen_test.dart` checks the form's reactions
   are sent only once it closes).
-- Build: `cd cat_id_app && flutter run --release` or `flutter build apk --release`.
+- Build: `cd cat_id_app && flutter run --release` or `flutter build apk --release` (a dev
+  build; add `--dart-define=CAT_ID_VERSION=v1.2.3` to test the Update button against a server
+  with a newer release).
   Release build has `isMinifyEnabled = false` / `isShrinkResources = false` in
   `android/app/build.gradle.kts` (R8 broke shared_preferences). minSdk 24.
 - `setup.sh` / `patch_android.py`: one-time project creation and manifest patch

@@ -18,6 +18,9 @@ class WhoAmI extends ChangeNotifier {
   /// The app-wide setting; [load] must have run first (see main.dart).
   static WhoAmI get instance => _instance!;
 
+  /// The app-wide setting, or null if [load] hasn't run (e.g. in tests).
+  static WhoAmI? get loaded => _instance;
+
   /// The current name, or null if not set (or not loaded, e.g. in tests).
   static String? get current => _instance?._name;
 

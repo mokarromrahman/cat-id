@@ -66,6 +66,8 @@ services:
       - ./model.joblib:/app/model.joblib
       - ./embeddings_cache.npz:/app/embeddings_cache.npz
       - ./hf_cache:/app/hf_cache  # pretrained weights download once
+      # The app's update APKs (written by deploy.yml / deploy_app_update.py, read-only here).
+      - ./app_updates:/app/app_updates:ro
 
   db:
     image: postgres:18

@@ -422,12 +422,55 @@ class VetVisit {
 }
 
 /// An error with a message that is fine to show to the user.
+/// One channel's entry of GET /app_update: the APK the server has for the app's Update
+/// button (release) or the Settings page's prerelease offer.
+class AppUpdateInfo {
+  AppUpdateInfo.fromJson(this.channel, Map<String, dynamic> j)
+      : version = j['version'] as String,
+        notes = (j['notes'] as String?) ?? '',
+        sha256 = j['sha256'] as String,
+        size = (j['size'] as num).toInt();
+
+  /// "release" or "prerelease": part of the download address.
+  final String channel;
+
+  /// The release tag, e.g. v1.4.4.
+  final String version;
+
+  /// The release notes (plain text, may be empty).
+  final String notes;
+
+  /// The APK's SHA-256 (hex); checked before installing.
+  final String sha256;
+
+  /// The APK's size in bytes.
+  final int size;
+}
+
+/// GET /app_update: what the server has to offer, per channel (null = nothing).
+class AppUpdates {
+  AppUpdates.fromJson(Map<String, dynamic> j)
+      : release = _channel('release', j['release']),
+        prerelease = _channel('prerelease', j['prerelease']);
+
+  static AppUpdateInfo? _channel(String name, dynamic v) =>
+      v is Map<String, dynamic> ? AppUpdateInfo.fromJson(name, v) : null;
+
+  final AppUpdateInfo? release;
+  final AppUpdateInfo? prerelease;
+}
+
 class ApiException implements Exception {
   ApiException(this.message);
   final String message;
 
   @override
   String toString() => message;
+}
+
+/// Thrown by [CatApi.downloadApk] when the person cancels the download.
+class DownloadCancelled implements Exception {
+  const DownloadCancelled();
 }
 
 /// What /identify and /litterbox send back.
@@ -902,6 +945,73 @@ class CatApi {
 
   /// Button art from the server's img_src/ (the label page's pictures).
   Uri assetUri(String file) => _uri('/asset/$file');
+
+  // ---------- app updates (server: app_update_api.py) ----------
+
+  /// GET /app_update. An older server without it: ApiException.
+  Future<AppUpdates> appUpdates() async {
+    final r = await _guard(() => http
+        .get(_uri('/app_update'), headers: {'X-API-Key': apiKey})
+        .timeout(const Duration(seconds: 10)));
+    final body = _detailBody(r, 'app updates');
+    if (body is! Map<String, dynamic>) {
+      throw ApiException('The server sent something unexpected.');
+    }
+    return AppUpdates.fromJson(body);
+  }
+
+  /// Downloads [update]'s APK (GET /app_update/{channel}/apk) into [dest], calling
+  /// [onProgress] with the bytes received so far. Stops early (and throws
+  /// [DownloadCancelled]) when [cancelled] returns true. A short download throws.
+  Future<void> downloadApk(AppUpdateInfo update, File dest,
+      {void Function(int received)? onProgress, bool Function()? cancelled}) async {
+    final client = http.Client();
+    try {
+      final req = http.Request('GET', _uri('/app_update/${update.channel}/apk'))
+        ..headers['X-API-Key'] = apiKey;
+      final http.StreamedResponse r;
+      try {
+        r = await client.send(req).timeout(const Duration(seconds: 30));
+      } on TimeoutException {
+        throw ApiException('${server.address} took too long to answer.');
+      } on SocketException {
+        throw _unreachable();
+      } on http.ClientException {
+        throw _unreachable();
+      }
+      if (r.statusCode != 200) {
+        await r.stream.drain<void>();
+        throw ApiException(r.statusCode == 401
+            ? 'Wrong API key for this server. Fix it under Servers.'
+            : r.statusCode == 404
+                ? "The server doesn't have that update any more. Pull to refresh and try again."
+                : 'Download failed (server error ${r.statusCode}).');
+      }
+      final sink = dest.openWrite();
+      var received = 0;
+      try {
+        await for (final chunk in r.stream.timeout(const Duration(seconds: 30))) {
+          if (cancelled?.call() ?? false) throw const DownloadCancelled();
+          sink.add(chunk);
+          received += chunk.length;
+          onProgress?.call(received);
+        }
+      } on TimeoutException {
+        throw ApiException('The download stalled. Check the connection and try again.');
+      } on SocketException {
+        throw ApiException('The download was cut off. Check the connection and try again.');
+      } on http.ClientException {
+        throw ApiException('The download was cut off. Check the connection and try again.');
+      } finally {
+        await sink.close();
+      }
+      if (received != update.size) {
+        throw ApiException('The download was incomplete. Try again.');
+      }
+    } finally {
+      client.close();
+    }
+  }
 
   /// POST /api/retrain. Trains again on the server's data/ folder; takes a few minutes.
   Future<void> retrain() async {

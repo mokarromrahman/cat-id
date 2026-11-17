@@ -69,11 +69,14 @@ jobs:
       - name: Build the APK
         # versionName comes from the tag (v0.2.0 -> 0.2.0). versionCode must go up every
         # build or Android refuses the update; minutes since 1970 always does.
+        # CAT_ID_VERSION tells the app which release it is, for its Update button (a build
+        # without it, e.g. flutter run on the Mac, is a dev build and never offers updates).
         run: |
           VERSION="${{ inputs.tag }}"
           flutter build apk --release \
             --build-name="${VERSION#v}" \
-            --build-number=$(( $(date +%s) / 60 ))
+            --build-number=$(( $(date +%s) / 60 )) \
+            --dart-define=CAT_ID_VERSION="${VERSION}"
           mv build/app/outputs/flutter-apk/app-release.apk "build/cat-id-${VERSION}.apk"
 
       # Fails the run if the APK isn't signed with the Mac's key, so a wrong key shows up
