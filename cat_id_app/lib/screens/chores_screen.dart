@@ -460,23 +460,28 @@ class _ChoreCard extends StatelessWidget {
                 _StartBox(start: chore.inProgress!, onEdit: onStart, onStop: onStop),
               // Wrap, not OverflowBar: with four buttons on a narrow phone (or a big font)
               // only the last one moves to a second row instead of all of them stacking.
-              Wrap(
-                alignment: WrapAlignment.end,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                spacing: 4,
-                children: [
-                  TextButton(onPressed: onHistory, child: const Text('History')),
-                  TextButton(onPressed: onEdit, child: const Text('Edit')),
-                  if (request == null && chore.active)
-                    TextButton(onPressed: onNeeded, child: const Text('Needed')),
-                  if (chore.inProgress == null && chore.active)
-                    TextButton(onPressed: onStart, child: const Text('Start')),
-                  FilledButton.tonalIcon(
-                    icon: const Icon(Icons.check),
-                    label: const Text('Done'),
-                    onPressed: onDone,
-                  ),
-                ],
+              // Full width, so a Done that moved down sits at the card's right edge even
+              // when the row above is short (Needed or Start hidden).
+              SizedBox(
+                width: double.infinity,
+                child: Wrap(
+                  alignment: WrapAlignment.end,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 4,
+                  children: [
+                    TextButton(onPressed: onHistory, child: const Text('History')),
+                    TextButton(onPressed: onEdit, child: const Text('Edit')),
+                    if (request == null && chore.active)
+                      TextButton(onPressed: onNeeded, child: const Text('Needed')),
+                    if (chore.inProgress == null && chore.active)
+                      TextButton(onPressed: onStart, child: const Text('Start')),
+                    FilledButton.tonalIcon(
+                      icon: const Icon(Icons.check),
+                      label: const Text('Done'),
+                      onPressed: onDone,
+                    ),
+                  ],
+                ),
               ),
             ],
           ),

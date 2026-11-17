@@ -279,6 +279,28 @@ void main() {
     }, () => server.client);
   });
 
+  testWidgets("every Done button sits at its card's right edge, request or not", (tester) async {
+    final server = FakeServer(); // Cat Food Pickup has an open request (no Needed button)
+    final store = await _store();
+    await http.runWithClient(() async {
+      // A narrow phone, so Done moves to a second row under a short first row.
+      tester.view.physicalSize = const Size(340, 4000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(MaterialApp(home: ChoresScreen(store: store, server: store.selected!)));
+      await tester.pumpAndSettle();
+      final dones = find.widgetWithText(FilledButton, 'Done');
+      expect(dones, findsAtLeastNWidgets(2));
+      for (final e in dones.evaluate()) {
+        final done = find.byWidget(e.widget);
+        final card = find.ancestor(of: done, matching: find.byType(Card)).first;
+        // The card's own padding on the right is 8 (plus the button's margin).
+        expect(tester.getRect(card).right - tester.getRect(done).right, lessThan(20),
+            reason: 'Done should be at the right edge of its card');
+      }
+    }, () => server.client);
+  });
+
   testWidgets('Done records the chore, done by you unless changed', (tester) async {
     final server = FakeServer();
     final store = await _store();
