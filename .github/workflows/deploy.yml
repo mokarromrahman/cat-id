@@ -43,21 +43,26 @@ jobs:
           [[ "${{ inputs.tag }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "::error::Tag must look like v1.2.3 or v1.2.3-name"; exit 1; }
           [ -n "$DEPLOY_DIR" ] && [ -f "$DEPLOY_DIR/.env" ] || { echo "::error::Set the DEPLOY_DIR repo variable to the folder with .env"; exit 1; }
 
-      # The tag's docker-compose.yml, so compose changes ship with the version, and the
-      # script that fetches the APK.
+      # The tag's docker-compose.yml, so compose changes ship with the version.
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.tag }}
-          sparse-checkout: |
-            docker-compose.yml
-            deploy_app_update.py
+          sparse-checkout: docker-compose.yml
+          sparse-checkout-cone-mode: false
+
+      # The APK script from this workflow's own commit, not the tag's, so deploying (rolling
+      # back to) a tag from before the script existed still works.
+      - uses: actions/checkout@v4
+        with:
+          path: deploy-tools
+          sparse-checkout: deploy_app_update.py
           sparse-checkout-cone-mode: false
 
       # Before the restart, so the new server starts with its own version's APK on offer.
       - name: Put the APK on the server for the app's Update button
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python3 "$GITHUB_WORKSPACE/deploy_app_update.py" "${{ inputs.tag }}" "${{ github.repository }}" "$DEPLOY_DIR"
+        run: python3 "$GITHUB_WORKSPACE/deploy-tools/deploy_app_update.py" "${{ inputs.tag }}" "${{ github.repository }}" "$DEPLOY_DIR"
 
       - uses: docker/login-action@v3
         with:
