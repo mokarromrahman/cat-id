@@ -191,11 +191,15 @@ class _EventsScreenState extends State<EventsScreen> {
         padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
         child: FractionallySizedBox(
           heightFactor: 0.85,
-          child: ReportEventScreen(
-            store: widget.store,
-            server: widget.server,
-            kind: kind,
-            onSent: (cat) => sent.add((cat: cat, reaction: reaction)),
+          // Keep the end of the form above Android's navigation bar (edge-to-edge).
+          child: SafeArea(
+            top: false,
+            child: ReportEventScreen(
+              store: widget.store,
+              server: widget.server,
+              kind: kind,
+              onSent: (cat) => sent.add((cat: cat, reaction: reaction)),
+            ),
           ),
         ),
       ),
