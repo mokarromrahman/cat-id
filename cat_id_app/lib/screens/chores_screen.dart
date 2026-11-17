@@ -204,8 +204,12 @@ class _ChoresScreenState extends State<ChoresScreen> {
       showDragHandle: true,
       builder: (context) => Padding(
         padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
-        child: ChoreStartForm(
-            api: _api, chore: c, people: _list?.people ?? const [], initial: c.inProgress),
+        // Keep the buttons above Android's navigation bar (edge-to-edge).
+        child: SafeArea(
+          top: false,
+          child: ChoreStartForm(
+              api: _api, chore: c, people: _list?.people ?? const [], initial: c.inProgress),
+        ),
       ),
     );
     if (saved == null) return;
@@ -753,7 +757,11 @@ Future<ChoreRequest?> showChoreRequestSheet(
       showDragHandle: true,
       builder: (context) => Padding(
         padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
-        child: ChoreRequestForm(api: api, chore: chore, initial: initial),
+        // Keep the buttons above Android's navigation bar (edge-to-edge).
+        child: SafeArea(
+          top: false,
+          child: ChoreRequestForm(api: api, chore: chore, initial: initial),
+        ),
       ),
     );
 
@@ -1063,8 +1071,12 @@ Future<ChoreEvent?> showChoreEventSheet(
       builder: (context) => Padding(
         // Keep the form above the keyboard.
         padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
-        child: ChoreEventForm(
-            api: api, chore: chore, chores: chores, people: people, initial: initial),
+        // Keep the buttons above Android's navigation bar (edge-to-edge).
+        child: SafeArea(
+          top: false,
+          child: ChoreEventForm(
+              api: api, chore: chore, chores: chores, people: people, initial: initial),
+        ),
       ),
     );
 
