@@ -150,7 +150,49 @@ void main() {
 
     testWidgets('nothing overdue', (tester) async {
       await _pumpHealth(tester, health(chores: [c('Vacuum')..['warning_threshold_days'] = null]));
-      expect(find.text('Nothing overdue', skipOffstage: false), findsOneWidget);
+      expect(find.text('Nothing overdue or needed', skipOffstage: false), findsOneWidget);
+    });
+
+    testWidgets('a chore marked as needed is listed with its request', (tester) async {
+      final now = DateTime.now().toUtc();
+      await _pumpHealth(tester, health(chores: [
+        c('Vacuum', lastDone: now.toIso8601String(),
+            due: now.add(const Duration(days: 7)).toIso8601String()),
+        {
+          ...c('Cat Food Pickup'),
+          'warning_threshold_days': null,
+          'request': {
+            'id': 1, 'chore': 'cat_food_pickup', 'chore_label': 'Cat Food Pickup',
+            'requested_on': now.subtract(const Duration(hours: 3)).toIso8601String(),
+            'requested_by': 'Ashley', 'notes': 'Royal Canin renal', 'quantity': 2,
+            'unit': 'bags', 'needed_by': null, 'status': 'open', 'overdue': false,
+          },
+        },
+      ]));
+      expect(find.text('Cat Food Pickup', skipOffstage: false), findsOneWidget);
+      expect(find.text('Needed: asked by Ashley (3 h ago)', skipOffstage: false), findsOneWidget);
+      expect(find.text('2 bags', skipOffstage: false), findsOneWidget);
+      expect(find.text('Royal Canin renal', skipOffstage: false), findsOneWidget);
+      expect(find.text('No reminder', skipOffstage: false), findsNothing);
+      expect(find.text('Vacuum', skipOffstage: false), findsNothing);
+    });
+
+    testWidgets('a chore in progress is listed with who is doing it', (tester) async {
+      final now = DateTime.now().toUtc();
+      await _pumpHealth(tester, health(chores: [
+        {
+          ...c('Vacuum', lastDone: now.toIso8601String(),
+              due: now.add(const Duration(days: 7)).toIso8601String()),
+          'in_progress': {
+            'id': 1, 'chore': 'vacuum', 'chore_label': 'Vacuum',
+            'started_on': now.subtract(const Duration(minutes: 30)).toIso8601String(),
+            'doers': ['Mac'], 'status': 'in_progress',
+          },
+        },
+      ]));
+      expect(find.text('Vacuum', skipOffstage: false), findsOneWidget);
+      expect(find.textContaining('In progress: Mac, since', skipOffstage: false), findsOneWidget);
+      expect(find.textContaining('Due in', skipOffstage: false), findsNothing);
     });
 
     testWidgets('no card for an older server', (tester) async {

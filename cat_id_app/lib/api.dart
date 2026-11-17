@@ -56,7 +56,13 @@ class Chore {
         lastDone = _time(j['last_done']),
         lastDoneBy = [for (final n in (j['last_done_by'] as List? ?? const [])) n as String],
         dueAt = _time(j['due_at']),
-        overdue = j['overdue'] as bool? ?? false;
+        overdue = j['overdue'] as bool? ?? false,
+        request = j['request'] is Map<String, dynamic>
+            ? ChoreRequest.fromJson(j['request'] as Map<String, dynamic>)
+            : null,
+        inProgress = j['in_progress'] is Map<String, dynamic>
+            ? ChoreStart.fromJson(j['in_progress'] as Map<String, dynamic>)
+            : null;
 
   static DateTime? _time(dynamic v) => v is String ? DateTime.parse(v).toLocal() : null;
 
@@ -78,7 +84,117 @@ class Chore {
 
   /// When it becomes overdue (null without a threshold, or if never done).
   final DateTime? dueAt;
+
+  /// Past its threshold, or past its open request's "needed by" day.
   final bool overdue;
+
+  /// The open "this needs doing" request, or null (also null from older servers).
+  final ChoreRequest? request;
+
+  /// Someone is doing it right now (Start), or null (also null from older servers).
+  final ChoreStart? inProgress;
+}
+
+/// Someone started a chore (the server's chore_start table). In progress until the chore's
+/// next Done or until someone taps Stop; at most one in progress per chore.
+class ChoreStart {
+  ChoreStart.fromJson(Map<String, dynamic> j)
+      : id = j['id'] as int,
+        chore = j['chore'] as String,
+        choreLabel = (j['chore_label'] as String?) ?? j['chore'] as String,
+        startedOn = DateTime.parse(j['started_on'] as String).toLocal(),
+        doers = [for (final n in (j['doers'] as List? ?? const [])) n as String],
+        reporter = j['reporter'] as String?,
+        notes = j['notes'] as String?,
+        status = (j['status'] as String?) ?? 'in_progress',
+        endedOn = Chore._time(j['ended_on']),
+        endedBy = j['ended_by'] as String?;
+
+  final int id;
+  final String chore;
+  final String choreLabel;
+  final DateTime startedOn;
+
+  /// Who is doing it; empty = not recorded.
+  final List<String> doers;
+  final String? reporter;
+  final String? notes;
+
+  /// in_progress, done or stopped.
+  final String status;
+  final DateTime? endedOn;
+  final String? endedBy;
+}
+
+/// Someone marked a chore as needing to be done (the server's chore_request table). Open
+/// until the chore's next Done, or until it's cancelled; at most one open per chore.
+class ChoreRequest {
+  ChoreRequest.fromJson(Map<String, dynamic> j)
+      : id = j['id'] as int,
+        chore = j['chore'] as String,
+        choreLabel = (j['chore_label'] as String?) ?? j['chore'] as String,
+        requestedOn = DateTime.parse(j['requested_on'] as String).toLocal(),
+        requestedBy = j['requested_by'] as String?,
+        notes = j['notes'] as String?,
+        quantity = (j['quantity'] as num?)?.toDouble(),
+        unit = j['unit'] as String?,
+        neededBy = j['needed_by'] is String ? DateTime.parse(j['needed_by'] as String) : null,
+        status = (j['status'] as String?) ?? 'open',
+        doneOn = Chore._time(j['done_on']),
+        doneBy = [for (final n in (j['done_by'] as List? ?? const [])) n as String],
+        cancelledOn = Chore._time(j['cancelled_on']),
+        closedBy = j['closed_by'] as String?,
+        overdue = j['overdue'] as bool? ?? false;
+
+  final int id;
+  final String chore;
+  final String choreLabel;
+  final DateTime requestedOn;
+  final String? requestedBy;
+  final String? notes;
+  final double? quantity;
+  final String? unit;
+
+  /// A day (midnight, local); the chore is overdue once it's over.
+  final DateTime? neededBy;
+
+  /// open, done or cancelled.
+  final String status;
+  final DateTime? doneOn;
+  final List<String> doneBy;
+  final DateTime? cancelledOn;
+
+  /// Who recorded the Done, or who cancelled it.
+  final String? closedBy;
+  final bool overdue;
+
+  bool get isOpen => status == 'open';
+
+  /// "2", "1.5" (null without a quantity).
+  String? get quantityNumber {
+    final q = quantity;
+    if (q == null) return null;
+    return q == q.roundToDouble() ? q.toInt().toString() : '$q';
+  }
+
+  /// "2 bags", "1.5", "bags", or null.
+  String? get quantityText {
+    final parts = [?quantityNumber, ?unit];
+    return parts.isEmpty ? null : parts.join(' ');
+  }
+}
+
+/// One page of GET /chore_requests; [next] is for Load more.
+class ChoreRequestsPage {
+  ChoreRequestsPage.fromJson(Map<String, dynamic> j)
+      : requests = [
+          for (final r in (j['requests'] as List? ?? const []))
+            ChoreRequest.fromJson(r as Map<String, dynamic>)
+        ],
+        next = j['next'] as String?;
+
+  final List<ChoreRequest> requests;
+  final String? next;
 }
 
 /// GET /chores: the chores, and the people who can be picked as having done one.
@@ -104,6 +220,10 @@ class ChoreEvent {
         doneBy = [for (final n in (j['done_by'] as List? ?? const [])) n as String],
         reporter = j['reporter'] as String?,
         notes = j['notes'] as String?,
+        startedOn = Chore._time(j['started_on']),
+        took = j['took_seconds'] is num
+            ? Duration(seconds: (j['took_seconds'] as num).toInt())
+            : null,
         modifiedBy = j['modified_by'] as String?,
         deleted = j['deleted_on'] != null;
 
@@ -118,6 +238,10 @@ class ChoreEvent {
   final List<String> doneBy;
   final String? reporter;
   final String? notes;
+
+  /// When it was started (null = not known), and how long it took from then.
+  final DateTime? startedOn;
+  final Duration? took;
   final String? modifiedBy;
   final bool deleted;
 }
@@ -589,9 +713,10 @@ class CatApi {
   }
 
   /// POST /chore_events: [chore] (a [Chore.name]) was done. [when] null = now; [doneBy]
-  /// empty = not recorded.
+  /// empty = not recorded; [startedAt] when it was started (null = not known). Ends the
+  /// chore's start and closes its request.
   Future<ChoreEvent> addChoreEvent(String chore,
-      {DateTime? when, List<String> doneBy = const [], String notes = ''}) async {
+      {DateTime? when, List<String> doneBy = const [], String notes = '', DateTime? startedAt}) async {
     final r = await _guard(() => http
         .post(_uri('/chore_events'),
             headers: _jsonHeaders,
@@ -601,6 +726,7 @@ class CatApi {
               'event_time': (when ?? DateTime.now()).toUtc().toIso8601String(),
               'done_by': doneBy,
               'notes': notes.trim(),
+              'started_at': startedAt?.toUtc().toIso8601String(),
             }))
         .timeout(const Duration(seconds: 15)));
     return ChoreEvent.fromJson(_choreJson(r));
@@ -628,6 +754,104 @@ class CatApi {
         .post(_uri('/chore_events/$id/restore', _userQuery), headers: _jsonHeaders)
         .timeout(const Duration(seconds: 15)));
     return ChoreEvent.fromJson(_choreJson(r));
+  }
+
+  /// POST /chore_starts: someone is doing [chore] now. [doers] empty = not recorded;
+  /// [startedAt] null = now. The server posts it to the chores Discord channel. 409 if it's
+  /// already in progress.
+  Future<ChoreStart> startChore(String chore,
+      {List<String> doers = const [], DateTime? startedAt, String notes = ''}) async {
+    final r = await _guard(() => http
+        .post(_uri('/chore_starts'),
+            headers: _jsonHeaders,
+            body: jsonEncode({
+              'user': _user,
+              'chore': chore,
+              'doers': doers,
+              'started_at': startedAt?.toUtc().toIso8601String(),
+              'notes': notes.trim(),
+            }))
+        .timeout(const Duration(seconds: 15)));
+    return ChoreStart.fromJson(_choreJson(r));
+  }
+
+  /// PATCH /chore_starts/{id}: any of doers (join / take over), started_at (a DateTime),
+  /// notes. In-progress only.
+  Future<ChoreStart> editChoreStart(int id, Map<String, dynamic> changes) async {
+    final body = {
+      for (final e in changes.entries)
+        e.key: e.value is DateTime ? (e.value as DateTime).toUtc().toIso8601String() : e.value,
+      'user': _user,
+    };
+    final r = await _guard(() => http
+        .patch(_uri('/chore_starts/$id'), headers: _jsonHeaders, body: jsonEncode(body))
+        .timeout(const Duration(seconds: 15)));
+    return ChoreStart.fromJson(_choreJson(r));
+  }
+
+  /// POST /chore_starts/{id}/stop: gave up without finishing.
+  Future<ChoreStart> stopChoreStart(int id) async {
+    final r = await _guard(() => http
+        .post(_uri('/chore_starts/$id/stop', _userQuery), headers: _jsonHeaders)
+        .timeout(const Duration(seconds: 15)));
+    return ChoreStart.fromJson(_choreJson(r));
+  }
+
+  /// "2026-11-20" for a day.
+  static String _day(DateTime d) =>
+      '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-'
+      '${d.day.toString().padLeft(2, '0')}';
+
+  /// GET /chore_requests, newest first. [chore] null = every chore; [status] open, done,
+  /// cancelled or null (all).
+  Future<ChoreRequestsPage> choreRequests(
+      {String? chore, String? status, String? before, int limit = 50}) async {
+    final query = {'chore': ?chore, 'status': ?status, 'before': ?before, 'limit': '$limit'};
+    final r = await _guard(() => http
+        .get(_uri('/chore_requests', query), headers: _jsonHeaders)
+        .timeout(const Duration(seconds: 15)));
+    return ChoreRequestsPage.fromJson(_choreJson(r));
+  }
+
+  /// POST /chore_requests: mark [chore] (a [Chore.name]) as needed. The server posts it to
+  /// the chores Discord channel. 409 if it already has an open request.
+  Future<ChoreRequest> addChoreRequest(String chore,
+      {String notes = '', double? quantity, String unit = '', DateTime? neededBy}) async {
+    final r = await _guard(() => http
+        .post(_uri('/chore_requests'),
+            headers: _jsonHeaders,
+            body: jsonEncode({
+              'user': _user,
+              'chore': chore,
+              'notes': notes.trim(),
+              'quantity': quantity,
+              'unit': unit.trim(),
+              'needed_by': neededBy == null ? null : _day(neededBy),
+            }))
+        .timeout(const Duration(seconds: 15)));
+    return ChoreRequest.fromJson(_choreJson(r));
+  }
+
+  /// PATCH /chore_requests/{id}: any of notes, quantity, unit, needed_by (a DateTime, or null
+  /// to clear). Open requests only.
+  Future<ChoreRequest> editChoreRequest(int id, Map<String, dynamic> changes) async {
+    final body = {
+      for (final e in changes.entries)
+        e.key: e.value is DateTime ? _day(e.value as DateTime) : e.value,
+      'user': _user,
+    };
+    final r = await _guard(() => http
+        .patch(_uri('/chore_requests/$id'), headers: _jsonHeaders, body: jsonEncode(body))
+        .timeout(const Duration(seconds: 15)));
+    return ChoreRequest.fromJson(_choreJson(r));
+  }
+
+  /// POST /chore_requests/{id}/cancel.
+  Future<ChoreRequest> cancelChoreRequest(int id) async {
+    final r = await _guard(() => http
+        .post(_uri('/chore_requests/$id/cancel', _userQuery), headers: _jsonHeaders)
+        .timeout(const Duration(seconds: 15)));
+    return ChoreRequest.fromJson(_choreJson(r));
   }
 
   // ---------- events (server: events_api.py) ----------

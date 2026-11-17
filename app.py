@@ -35,8 +35,13 @@ GET/POST/PATCH/DELETE /vet_visit...  vet visits for the app's Vet tab, see vet_a
 GET  /events     events (filter by cat, type, date range), totals and chart data for the
                  app's Events tab; GET /event_types; GET /picture/{id}/image serves an
                  event's photo. See events_api.py.
-GET/POST/PATCH /chores, GET/POST/PATCH/DELETE /chore_events...  household chores and when
-                 they were done, for the app's Chores page, see chores_api.py. No Discord
+GET/POST/PATCH /chores, GET/POST/PATCH/DELETE /chore_events..., GET/POST/PATCH
+                 /chore_requests..., GET/POST/PATCH /chore_starts...  household chores, when
+                 they were done (and how long they took), requests that one needs doing,
+                 and who is doing one right now, for the app's Chores page, see
+                 chores_api.py. Requests, Dones, cancellations, starts and stops post to the
+                 chores Discord channel (CHORES_DISCORD_WEBHOOK_URL; skipped if not set), see
+                 chore_discord.py
 POST /api/retrain  re-run training on data/ and hot-reload the model
 GET  /health     is the model loaded, which classes it knows, how many training
                  photos each class has in data/ (the same ones train.py reads), how
@@ -58,7 +63,8 @@ GET  /health     is the model loaded, which classes it knows, how many training
                               "warning_threshold_days": 7, "active": true,
                               "last_done": "2026-11-10T18:00:00+00:00",
                               "last_done_by": ["Ashley"],
-                              "due_at": "2026-11-17T18:00:00+00:00", "overdue": false}, ...]}
+                              "due_at": "2026-11-17T18:00:00+00:00", "overdue": false,
+                              "request": null, "in_progress": null}, ...]}
 
 `user` everywhere is a name from app_user (pi, Ashley, Mac); missing or unknown means the
 system user. Database writes never fail a request: if Postgres is down they go to

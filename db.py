@@ -17,6 +17,10 @@ Tables (every one also has created_on, modified_by, modified_on):
               days may pass before one counts as overdue (warning_threshold_days; null = never)
   chore_event a chore was done (chores_api.py); soft-deleted with deleted_on
   chore_event_doer  who did it: one row per person per chore_event (none = not recorded)
+  chore_start a chore is being done right now (Start), by whom (chore_start_doer); ended by
+              its Done or by Stop; at most one in progress per chore
+  chore_request  a chore was marked as needing to be done (note, quantity + unit, needed-by
+              date); closed by the next Done or cancelled; at most one open per chore
 View active_vet_visit is vet_visit without the soft-deleted rows.
 
 The schema itself is created by Alembic (migrations/). The models here must match it;
@@ -33,6 +37,7 @@ import time as _time
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import (
     REAL, Boolean, CheckConstraint, Date, DateTime, FetchedValue, ForeignKey, Identity, Index, Integer,
@@ -40,7 +45,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.dialects.postgresql import ARRAY
-from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, aliased, mapped_column, sessionmaker
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 FAILED_FILE = Path(os.environ.get("DB_FAILED_FILE", "inbox/_db_failed.jsonl"))
@@ -215,10 +220,16 @@ class Chore(Audit, Base):
 
 class ChoreEvent(Audit, Base):
     __tablename__ = "chore_event"
-    __table_args__ = (Index("ix_chore_event_chore_id_event_timestamp", "chore_id", "event_timestamp"),)
+    __table_args__ = (
+        Index("ix_chore_event_chore_id_event_timestamp", "chore_id", "event_timestamp"),
+        CheckConstraint("started_on <= event_timestamp", name="chore_event_started_before_done"),
+    )
     id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
     chore_id: Mapped[int] = mapped_column(ForeignKey("chore.id", ondelete="RESTRICT"))
     event_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    # When it was started (its chore_start, or typed in); None = not known. The time it took
+    # is event_timestamp - started_on.
+    started_on: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     reporter_id: Mapped[int] = mapped_column(ForeignKey("app_user.id", ondelete="RESTRICT"))
     notes: Mapped[str | None] = mapped_column(Text)
     deleted_on: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -231,6 +242,74 @@ class ChoreEventDoer(Audit, Base):
     id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
     chore_event_id: Mapped[int] = mapped_column(ForeignKey("chore_event.id", ondelete="CASCADE"))
     app_user_id: Mapped[int] = mapped_column(ForeignKey("app_user.id", ondelete="RESTRICT"))
+
+
+class ChoreStart(Audit, Base):
+    """Someone is doing a chore right now (chores_api.py). In progress until the chore's next
+    Done (end_reason done, chore_event_id) or Stop (end_reason stopped); at most one in
+    progress per chore (partial unique index). Who: chore_start_doer."""
+    __tablename__ = "chore_start"
+    __table_args__ = (
+        CheckConstraint("end_reason IN ('done', 'stopped')", name="chore_start_end_reason"),
+        CheckConstraint("(ended_on IS NULL) = (end_reason IS NULL)", name="chore_start_ended"),
+        Index("ix_chore_start_chore_id_started_on", "chore_id", "started_on"),
+        Index("uq_chore_start_open", "chore_id", unique=True,
+              postgresql_where=text("ended_on IS NULL")),
+    )
+    id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
+    chore_id: Mapped[int] = mapped_column(ForeignKey("chore.id", ondelete="RESTRICT"))
+    started_on: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    reporter_id: Mapped[int] = mapped_column(ForeignKey("app_user.id", ondelete="RESTRICT"))
+    notes: Mapped[str | None] = mapped_column(Text)
+    ended_on: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    end_reason: Mapped[str | None] = mapped_column(Text)    # done / stopped
+    # The Done that ended it. Deleting that Done puts it back in progress.
+    chore_event_id: Mapped[int | None] = mapped_column(
+        ForeignKey("chore_event.id", ondelete="SET NULL"))
+    ended_by: Mapped[int | None] = mapped_column(ForeignKey("app_user.id", ondelete="RESTRICT"))
+    discord_message_id: Mapped[str | None] = mapped_column(Text)
+
+
+class ChoreStartDoer(Audit, Base):
+    """Who is doing a started chore: one row per person (app_user.human) per chore_start."""
+    __tablename__ = "chore_start_doer"
+    __table_args__ = (UniqueConstraint("chore_start_id", "app_user_id", name="uq_chore_start_doer"),)
+    id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
+    chore_start_id: Mapped[int] = mapped_column(ForeignKey("chore_start.id", ondelete="CASCADE"))
+    app_user_id: Mapped[int] = mapped_column(ForeignKey("app_user.id", ondelete="RESTRICT"))
+
+
+class ChoreRequest(Audit, Base):
+    """Someone marked a chore as needing to be done (chores_api.py). Open until a Done is
+    recorded for that chore (done_on, chore_event_id) or it's cancelled (cancelled_on); at
+    most one open request per chore (partial unique index)."""
+    __tablename__ = "chore_request"
+    __table_args__ = (
+        CheckConstraint("quantity > 0", name="chore_request_quantity_positive"),
+        CheckConstraint("done_on IS NULL OR cancelled_on IS NULL",
+                        name="chore_request_done_or_cancelled"),
+        Index("ix_chore_request_chore_id_requested_on", "chore_id", "requested_on"),
+        Index("uq_chore_request_open", "chore_id", unique=True,
+              postgresql_where=text("done_on IS NULL AND cancelled_on IS NULL")),
+    )
+    id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
+    chore_id: Mapped[int] = mapped_column(ForeignKey("chore.id", ondelete="RESTRICT"))
+    requested_on: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    reporter_id: Mapped[int] = mapped_column(ForeignKey("app_user.id", ondelete="RESTRICT"))
+    notes: Mapped[str | None] = mapped_column(Text)
+    quantity: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))  # free number ...
+    unit: Mapped[str | None] = mapped_column(Text)                    # ... plus a free unit
+    # An Edmonton day; past the end of it the chore counts as overdue.
+    needed_by: Mapped[date | None] = mapped_column(Date)
+    done_on: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # The Done that closed it. Deleting that Done reopens the request.
+    chore_event_id: Mapped[int | None] = mapped_column(
+        ForeignKey("chore_event.id", ondelete="SET NULL"))
+    cancelled_on: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Who did it (the Done's reporter) or cancelled it.
+    closed_by: Mapped[int | None] = mapped_column(ForeignKey("app_user.id", ondelete="RESTRICT"))
+    # The webhook message announcing it, so it can be edited when it's done or cancelled.
+    discord_message_id: Mapped[str | None] = mapped_column(Text)
 
 
 # ---------- connection ----------
@@ -422,8 +501,10 @@ def _iso(t):
 
 def chore_rows(session, include_inactive: bool = False, now: datetime | None = None) -> list[dict]:
     """Each chore (id order) with when it was last done and by whom (soft-deleted events
-    don't count), when it's due and whether it's overdue (more than warning_threshold_days
-    x 24 h since it was last done, or never done; never overdue without a threshold)."""
+    don't count), when it's due, its open request (or None) and whether it's overdue (more
+    than warning_threshold_days x 24 h since it was last done, or never done; never overdue
+    on that count without a threshold; also overdue once the open request's needed_by day
+    is over)."""
     now = now or utcnow()
     live = ChoreEvent.deleted_on.is_(None)
     # The newest live event per chore (DISTINCT ON keeps the first row of each chore).
@@ -437,16 +518,102 @@ def chore_rows(session, include_inactive: bool = False, now: datetime | None = N
         q = q.where(Chore.active)
     rows = session.execute(q).all()
     doers = chore_doers(session, [eid for _, eid, _ in rows if eid is not None])
+    requests = {r["chore_id"]: r for r in chore_requests(session, REQUEST_OPEN, now=now)}
+    starts = {r["chore_id"]: r for r in chore_starts(session, START_OPEN)}
     out = []
     for c, eid, last in rows:
         days = c.warning_threshold_days
         due = last + timedelta(days=days) if days and last else None
+        request = requests.get(c.id)
         out.append({
             "id": c.id, "name": c.name, "label_name": c.label_name,
             "warning_threshold_days": days, "active": c.active,
             "last_done": _iso(last), "last_done_by": doers.get(eid, []),
             "due_at": _iso(due),
-            "overdue": bool(days) and (last is None or now > due),
+            "overdue": (bool(days) and (last is None or now > due))
+                       or bool(request and request["overdue"]),
+            "request": request,
+            "in_progress": starts.get(c.id),
+        })
+    return out
+
+
+EDMONTON = ZoneInfo("America/Edmonton")
+REQUEST_OPEN = ChoreRequest.done_on.is_(None) & ChoreRequest.cancelled_on.is_(None)
+START_OPEN = ChoreStart.ended_on.is_(None)
+
+
+def start_doers(session, start_ids) -> dict:
+    """{chore_start id: [person names, alphabetical]}."""
+    if not start_ids:
+        return {}
+    found = {}
+    for sid, name in session.execute(
+            select(ChoreStartDoer.chore_start_id, AppUser.name)
+            .join(AppUser, AppUser.id == ChoreStartDoer.app_user_id)
+            .where(ChoreStartDoer.chore_start_id.in_(start_ids)).order_by(AppUser.name)):
+        found.setdefault(sid, []).append(name)
+    return found
+
+
+def chore_starts(session, *where, limit: int | None = None) -> list[dict]:
+    """Start dicts (see chores_api.py) for the chore_start rows matching `where`, newest
+    first."""
+    reporter, ender = aliased(AppUser), aliased(AppUser)
+    q = (select(ChoreStart, Chore.name, Chore.label_name, reporter.name, ender.name)
+         .join(Chore, Chore.id == ChoreStart.chore_id)
+         .join(reporter, reporter.id == ChoreStart.reporter_id)
+         .outerjoin(ender, ender.id == ChoreStart.ended_by)
+         .where(*where)
+         .order_by(ChoreStart.started_on.desc(), ChoreStart.id.desc()))
+    if limit is not None:
+        q = q.limit(limit)
+    rows = session.execute(q).all()
+    doers = start_doers(session, [r.id for r, *_ in rows])
+    return [{
+        "id": r.id, "chore_id": r.chore_id, "chore": name, "chore_label": label,
+        "started_on": _iso(r.started_on), "doers": doers.get(r.id, []), "reporter": rep,
+        "notes": r.notes, "status": r.end_reason or "in_progress", "ended_on": _iso(r.ended_on),
+        "ended_by": ended, "chore_event_id": r.chore_event_id,
+    } for r, name, label, rep, ended in rows]
+
+
+def needed_by_passed(needed_by: date | None, now: datetime) -> bool:
+    """True once the Edmonton day `needed_by` is over."""
+    if needed_by is None:
+        return False
+    nxt = needed_by + timedelta(days=1)
+    return now >= datetime(nxt.year, nxt.month, nxt.day, tzinfo=EDMONTON)
+
+
+def chore_requests(session, *where, limit: int | None = None, now: datetime | None = None) -> list[dict]:
+    """Request dicts (see chores_api.py) for the chore_request rows matching `where`, newest
+    first."""
+    now = now or utcnow()
+    reporter, closer = aliased(AppUser), aliased(AppUser)
+    q = (select(ChoreRequest, Chore.name, Chore.label_name, reporter.name, closer.name)
+         .join(Chore, Chore.id == ChoreRequest.chore_id)
+         .join(reporter, reporter.id == ChoreRequest.reporter_id)
+         .outerjoin(closer, closer.id == ChoreRequest.closed_by)
+         .where(*where)
+         .order_by(ChoreRequest.requested_on.desc(), ChoreRequest.id.desc()))
+    if limit is not None:
+        q = q.limit(limit)
+    rows = session.execute(q).all()
+    doers = chore_doers(session, [r.chore_event_id for r, *_ in rows if r.chore_event_id])
+    out = []
+    for r, name, label, rep, closed in rows:
+        status = "done" if r.done_on else "cancelled" if r.cancelled_on else "open"
+        out.append({
+            "id": r.id, "chore_id": r.chore_id, "chore": name, "chore_label": label,
+            "requested_on": _iso(r.requested_on), "requested_by": rep,
+            "notes": r.notes, "quantity": float(r.quantity) if r.quantity is not None else None,
+            "unit": r.unit, "needed_by": r.needed_by.isoformat() if r.needed_by else None,
+            "status": status, "done_on": _iso(r.done_on), "chore_event_id": r.chore_event_id,
+            "done_by": doers.get(r.chore_event_id, []) if status == "done" else [],
+            "cancelled_on": _iso(r.cancelled_on),
+            "closed_by": closed,
+            "overdue": status == "open" and needed_by_passed(r.needed_by, now),
         })
     return out
 

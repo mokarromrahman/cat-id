@@ -25,8 +25,9 @@ https://cat-id.<tailnet>.ts.net, only the owner's and Ashley's phones, only port
 | `db.py` | SQLAlchemy 2 models, connection, `safe_write`/`safe_read`, and the writers (picture, label, crop, archive, delete, undo, cough) that `app.py` and `replay_db_failed.py` share. |
 | `vet_api.py` | `/vet_visit` routes (APIRouter included by `app.py`). |
 | `events_api.py` | `/events`, `/event_types`, `/picture/{id}/image` for the app's Events tab (APIRouter included by `app.py`). |
-| `chores_api.py` | `/chores`, `/chore_events` for the app's Chores page (APIRouter included by `app.py`). |
-| `alembic.ini`, `migrations/` | Alembic. `0001_initial_schema.py`: tables, CHECKs, audit trigger, `active_vet_visit` view, seed rows. `0002_location_and_litterbox_clean.py`: `location`, `litterbox_clean_event`, `location_id` on `picture`/`event`, backfill of the Pi's photos to basement. `0003_chores.py`: `chore`, `chore_event`, `chore_event_doer`, `app_user.human`, seed chores. |
+| `chores_api.py` | `/chores`, `/chore_events`, `/chore_requests`, `/chore_starts` for the app's Chores page (APIRouter included by `app.py`). |
+| `chore_discord.py` | Chores Discord channel (`CHORES_DISCORD_WEBHOOK_URL`): request and start posts and their edits, "done"/"cancelled"/"needed again"/"stopped" messages. Background tasks from `chores_api.py`. |
+| `alembic.ini`, `migrations/` | Alembic. `0001_initial_schema.py`: tables, CHECKs, audit trigger, `active_vet_visit` view, seed rows. `0002_location_and_litterbox_clean.py`: `location`, `litterbox_clean_event`, `location_id` on `picture`/`event`, backfill of the Pi's photos to basement. `0003_chores.py`: `chore`, `chore_event`, `chore_event_doer`, `app_user.human`, seed chores. `0004_chore_requests.py`: `chore_request` (partial unique index: one open per chore). `0005_chore_starts.py`: `chore_start`, `chore_start_doer`, `chore_event.started_on` (CHECK `started_on <= event_timestamp`). |
 | `start.py` | Container entry point: waits up to 30 s for Postgres, runs `alembic upgrade head`, then starts uvicorn either way. |
 | `replay_db_failed.py` | Replays `inbox/_db_failed.jsonl` (writes that failed while Postgres was down). |
 | `sorter_core.py` | Framework-free photo sorter shared by `label.py` and `/label`: undo history, crop/rotate, archive, delete, log. Optional `on_action` callback (server only) updates the DB. |
@@ -77,9 +78,32 @@ Not in git: `data/`, `inbox/`, `model.joblib`, `embeddings_cache.npz`, `hf_cache
   see `events_api.py`. View only. Key in `X-API-Key`; 503 if the DB is down. Totals and chart
   data cover the whole filtered range and come with the first page only.
 - `GET|POST /chores`, `PATCH /chores/{id}`, `GET|POST /chore_events`,
-  `PATCH|DELETE /chore_events/{id}`, `POST /chore_events/{id}/restore`: see `chores_api.py`.
-  JSON bodies, key in `X-API-Key`, need the DB (503 if down; no failed-file replay). No
-  Discord. `GET /chores` also returns `people` (the `human` users, for "Done by").
+  `PATCH|DELETE /chore_events/{id}`, `POST /chore_events/{id}/restore`, `GET|POST
+  /chore_requests`, `PATCH /chore_requests/{id}`, `POST /chore_requests/{id}/cancel`, `GET|POST
+  /chore_starts`, `PATCH /chore_starts/{id}`, `POST /chore_starts/{id}/stop`: see
+  `chores_api.py`. JSON bodies, key in `X-API-Key`, need the DB (503 if down; no failed-file
+  replay). `GET /chores` also returns `people` (the `human` users, for "Done by") and each
+  chore's open `request` and `in_progress` start (or null). A second open request or a
+  second start for a chore: 409; a `needed_by` in the past or a future start: 422; a start
+  time after the done time: 400. `POST /chore_events` takes `started_at` (missing = the start
+  in progress, if any; null = not known); events return `started_on` and `took_seconds`.
+- Chores Discord (`chore_discord.py`, `CHORES_DISCORD_WEBHOOK_URL`, nothing sent if unset; runs
+  after the response, a failure is only logged): a request posts "🛒 <chore> needs doing
+  (asked by ...)" with quantity, needed-by and note, posted with `?wait=true` so its message id
+  is kept (`chore_request.discord_message_id`, `<message id>/<channel id>`). Every Done posts
+  a new "✅ <chore> done by ..." (for every chore, request or not). If the Done closed a
+  request, the request's message is edited to ✅ and struck through, with who and when, and the
+  new message links to it (`https://discord.com/channels/<guild>/<channel>/<message>`; the
+  guild id is looked up once with `GET` on the webhook). Cancel: same with ❌. Deleting the
+  Done that closed a request reopens it (message back to 🛒, plus "↩️ ... is needed again");
+  restoring the Done closes it again (edit only). Editing a request edits its message.
+  Start: "▶️ <chore> started by ..." (message id on `chore_start.discord_message_id`); its Done
+  edits it to ✅ with "took 45 min", and the "done" message says "started <time>, took 45
+  min" (no start time: "done at <time>", no duration). Stop: the start's message goes to ⏹️
+  and a new "stopped by ... (not finished)" message links to it. Joining or taking over
+  (editing a start's people) posts nothing.
+  Webhooks can edit their own messages but can't add reactions, so ✅ is in the text. Times
+  use Discord's `<t:unix:f>` markup (each reader's own time zone).
 - `GET /health`: `{model_loaded, classes, photos: {class: count}, waiting_in_inbox, version,
   commit, litterboxes, chores}`. `litterboxes`: per location `{location, name, last_cleaned,
   bag_last_changed}` (UTC, null if never), or null if the DB is down (`db.litterbox_status()`).
@@ -108,7 +132,7 @@ Not in git: `data/`, `inbox/`, `model.joblib`, `embeddings_cache.npz`, `hf_cache
   gotcha day 2023-11-21), `event_type` (`litterbox`/Litterbox, `cough`/Cough: code + display
   name), `label` (Litten, Shinx, neither, both, with optional cat), `picture`, `event`,
   `vet_visit`, `location` (`basement`/Basement, `master_bathroom`/Master Bathroom: unique `name`
-  + `label_name`), `litterbox_clean_event`, `chore`, `chore_event`, `chore_event_doer`. View `active_vet_visit`. Diagram: https://claude.ai/artifact/NsFLSjW8gcAGmHAmhoJRYa
+  + `label_name`), `litterbox_clean_event`, `chore`, `chore_event`, `chore_event_doer`, `chore_request`, `chore_start`, `chore_start_doer`. View `active_vet_visit`. Diagram: https://claude.ai/artifact/NsFLSjW8gcAGmHAmhoJRYa
 - A trigger on every table sets `modified_on` on insert/update (DBeaver edits too) and fills an
   empty `modified_by` with `system`. Integer identity IDs. No edit-history table.
 - `user` on every request is an `app_user` name; missing or unknown means `system`.
@@ -144,11 +168,34 @@ Not in git: `data/`, `inbox/`, `model.joblib`, `embeddings_cache.npz`, `hf_cache
   Seeded: Vacuum 7, Laundry 7, Sweeping 7, Mopping 14, Bathrooms 7, Bed Sheets 14, Cat Food /
   Cat Medication / Cat Treat Pickup (no threshold). Kept separate from vet_visit's pickup
   reasons and from litterbox cleaning. Overdue = has a threshold and never done, or more than
-  threshold x 24 h since the newest non-deleted `chore_event` (`db.chore_rows()`).
+  threshold x 24 h since the newest non-deleted `chore_event`, or its open request's
+  `needed_by` day (Edmonton) is over (`db.chore_rows()`).
 - `chore_event`: `chore_id`, `event_timestamp` (when it was done; app picks, default now; not
   the future), `reporter_id`, `notes`, `deleted_on` (soft delete, like `vet_visit`). Who did
   it: `chore_event_doer` (`chore_event_id` CASCADE, `app_user_id`, unique together); none =
   not recorded. No rooms/locations.
+- `chore_request`: "this chore needs doing", for any chore. `chore_id`, `requested_on`,
+  `reporter_id`, `notes`, `quantity` numeric(10,2) (> 0) + `unit` (free text, e.g. bags),
+  `needed_by` (date, an Edmonton day; not in the past when set), `done_on` + `chore_event_id`
+  (the Done that closed it, SET NULL), `cancelled_on`, `closed_by` (who recorded the Done or
+  cancelled it), `discord_message_id`. Status = done / cancelled / open (CHECK not both). At
+  most one open per chore (partial unique index `uq_chore_request_open`); a second "Needed"
+  edits the open one. Closed only by the chore's next Done (`POST /chore_events`) or Cancel;
+  deleting that Done reopens it (unless the chore has another open one), restoring it closes
+  it again. Not closed by a vet visit (see the open ideas). `db.chore_requests()` builds the
+  request dicts.
+- `chore_start`: someone is doing a chore right now (any chore). `chore_id`, `started_on`
+  (app picks, default now; not the future), `reporter_id`, `notes`, `ended_on` +
+  `end_reason` (`done`/`stopped`, both null while in progress), `chore_event_id` (the Done
+  that ended it, SET NULL), `ended_by`, `discord_message_id`. Who: `chore_start_doer` (like
+  `chore_event_doer`); anyone can be added or removed (join / take over), anyone can stop it.
+  At most one in progress per chore (`uq_chore_start_open`). Ended by the chore's next Done
+  or by Stop; stays in progress otherwise (no time-out). Deleting its Done puts it back in
+  progress; restoring ends it again. `db.chore_starts()` builds the start dicts.
+- `chore_event.started_on` (nullable): when it was started, copied from the start in
+  progress, or typed in on the Done sheet when nobody tapped Start. Time taken =
+  `event_timestamp - started_on` (from the first start, whoever joined later). Neither time is
+  required (done defaults to now); start after done is refused.
 - `vet_visit`: `cat_id` nullable (pickups), `visit_date` (date), `appointment_time` (time,
   Edmonton clock), `doctor`, `clinic` (default `unknown`), `notes`, `reason` text[] (checkup,
   shots, emergency, food pickup, medication pickup, other; at least one), `weight_kg`
@@ -201,14 +248,30 @@ to Add event > Litterbox).
   Sent as `user` on identify, litterbox, cough and vet requests, and as `?user=` on the Label
   web view. Not set means nothing is sent (server records `system`).
 - Chores page (`screens/chores_screen.dart`, menu > Chores or Health's Chores card > Open):
-  chores sorted overdue first (never done, then longest overdue), then by due date, then no
-  reminder; red border and warning icon when overdue; "Last done <day, time> by ... (<ago>)"
-  and "Overdue by / Due in ... (every N days)". Done opens a sheet (When, Done by chips from
-  `people`, preselected with Who am I, note, Save). Edit (name, warn-after days or blank,
-  "Show on the list"), Add chore, Show hidden chores. History
-  (`screens/chore_history_screen.dart`, per chore or all): newest first, Load more, edit
-  (incl. which chore), delete, Show deleted + Restore.
-- Health tab: a Chores card with only the overdue chores, or "Nothing overdue" (hidden for
+  chores sorted overdue first (never done, then longest overdue), then the ones marked as
+  needed (soonest needed-by first), then by due date, then no reminder; red border and
+  warning icon when overdue, tertiary border and cart icon when needed; "Last done <day,
+  time> by ... (<ago>)" and "Overdue by / Due in ... (every N days)". Header "N overdue · M
+  needed". Needed opens a sheet (`ChoreRequestForm`: quantity + unit, "Needed by" day or none,
+  note, "Save and tell Discord"); an open request shows in a box on the card ("Needed: asked
+  by ... (<ago>)", details) with Edit request / Cancel request (confirm dialog). Done opens a
+  sheet (When, Done by chips from `people`, preselected with Who am I, note, Save; shows the
+  open request and "Saving this closes the request."; "Started (optional)" prefilled from the
+  start in progress, with "took ..."; Done by prefilled with whoever started it; refuses a
+  start after the done time). Start opens `ChoreStartForm` (who, default you; Started, default
+  now; note; "Start and tell Discord"); an in-progress chore shows "In progress: Ashley and
+  Mac, since <day, time> (<how long>)" with "Who / when" (join, take over, change the start)
+  and Stop (confirm dialog). Header adds "N in progress". Edit (name, warn-after days or blank,
+  "Show on the list"), Add chore, Show hidden chores. The card's buttons are in a `Wrap` so
+  only the last one moves down on a narrow phone. History
+  (`screens/chore_history_screen.dart`, per chore or all): Done / Requests switch. Done:
+  newest first, Load more, edit (incl. which chore and the start time), delete, Show deleted +
+  Restore; "Started <day, time> · took 45 min" when known.
+  Requests: newest first, Load more, status chip (Open / Overdue / Done / Cancelled), who
+  asked, details, who did or cancelled it.
+- Health tab: a Chores card with the overdue chores, the ones marked as needed (with the
+  request's line and details) and the ones in progress (who, since when), or "Nothing
+  overdue or needed" (hidden for
   servers without `chores`). A Litterboxes card per location: "Last cleaned <day, time> (<ago>)", red with a
   warning icon when over 24 h or never (`kCleanOverdueAfter`), and "Bag was last changed <day,
   time>" (no highlight). Hidden for servers without `litterboxes`.
@@ -254,7 +317,9 @@ to Add event > Litterbox).
   uses `/identify`), `cough(cat, info, photoPath:, when:)`, `litterbox(cat, info, photoPath:, when:, location:)`,
   `litterboxClean(location, bagChanged:, info:, when:)`, `vetVisits`, `addVetVisits`, `editVetVisit`, `deleteVetVisit`,
   `restoreVetVisit`, `eventTypes`, `events`, `pictureUri`, `retrain()`, `chores`, `addChore`, `editChore`,
-  `choreEvents`, `addChoreEvent`, `editChoreEvent`, `deleteChoreEvent`, `restoreChoreEvent`.
+  `choreEvents`, `addChoreEvent`, `editChoreEvent`, `deleteChoreEvent`, `restoreChoreEvent`,
+  `choreRequests`, `addChoreRequest`, `editChoreRequest`, `cancelChoreRequest`, `startChore`,
+  `editChoreStart`, `stopChoreStart` (`addChoreEvent` takes `startedAt`).
 - Tests: `flutter test` (`test/vet_screen_test.dart`, `test/events_screen_test.dart`,
   `test/chores_screen_test.dart` and `test/health_screen_test.dart` drive the Vet, Events,
   Chores and Health screens against a fake server;
@@ -274,6 +339,10 @@ the server first (a missing bind-mounted file becomes an empty directory and cra
 server). `.env` with test values (`POSTGRES_PASSWORD`, `API_KEY=test`, empty Discord webhooks).
 `docker compose up --build`, then `curl localhost:8000/health`. `data/Litten`, `data/Shinx`,
 `data/neither` must exist for all label buttons to work.
+Without a Tailscale login on the Mac the `tailscale` sidecar keeps restarting and takes
+cat-id's network (and `db` name lookups) with it. Then run the built image on the compose
+network instead: `docker run --network cat-id_default -p 8001:8000 -e API_KEY=test -e
+DATABASE_URL=postgresql+psycopg://catid:<pw>@db:5432/catid ... ghcr.io/mokarromrahman/cat-id:latest`.
 
 ## Other open ideas
 
@@ -330,6 +399,14 @@ server). `.env` with test values (`POSTGRES_PASSWORD`, `API_KEY=test`, empty Dis
        wakes in the background (every 15+ min at best), reads `/health`'s `chores` and shows
        a local notification. No server work, but Android delays or kills background jobs
        and it only works while Tailscale is connected. Least reliable.
+  - Chore requests ("this needs doing", `chore_request`; today they go to Discord through
+    `chore_discord.py`) should get an app push too, once one of the delivery options above exists: a push to
+    the other people when a chore is marked as needed, and optionally one when it's done or
+    cancelled. Until then they go to Discord only.
+- **Vet visit closes pickup requests (nice to have, not built).** Saving a `vet_visit`
+  with reason `food pickup` / `medication pickup` could close the open Cat Food Pickup /
+  Cat Medication Pickup request (and log the chore as done). Left out on purpose for now:
+  vet visits and chores stay separate, and requests close only via Done or Cancel.
 - Alerts: no litterbox visit from a cat in 24 h+, unusual frequency; weekly Discord summary
   (would read `picture`, so they don't depend on how fast photos are labeled).
 - `evaluate.py` for held-out accuracy; auto-retrain after N new labels.

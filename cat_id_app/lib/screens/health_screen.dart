@@ -194,11 +194,14 @@ class _HealthScreenState extends State<HealthScreen> {
     );
   }
 
-  /// The overdue chores (see Chore.overdue), longest overdue first, or "Nothing overdue".
+  /// The overdue chores (see Chore.overdue), longest overdue first, then the ones marked
+  /// as needed (Chore.request), or "Nothing overdue or needed".
   Widget _choreCard(bool dbDown, List<Chore> chores, ThemeData theme) {
     final now = DateTime.now();
     final scheme = theme.colorScheme;
-    final overdue = sortChores(chores).where((c) => c.overdue).toList();
+    final overdue = sortChores(chores)
+        .where((c) => c.overdue || c.request != null || c.inProgress != null)
+        .toList();
     return Card(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 16, 8, 8),
@@ -219,7 +222,7 @@ class _HealthScreenState extends State<HealthScreen> {
                 children: [
                   Icon(Icons.check_circle_outline, size: 20, color: Colors.greenAccent),
                   SizedBox(width: 8),
-                  Text('Nothing overdue'),
+                  Text('Nothing overdue or needed'),
                 ],
               )
             else
@@ -234,12 +237,31 @@ class _HealthScreenState extends State<HealthScreen> {
                         children: [
                           Expanded(
                               child: Text(c.label,
-                                  style: theme.textTheme.titleSmall?.copyWith(color: scheme.error))),
-                          Icon(Icons.warning_amber, size: 20, color: scheme.error),
+                                  style: theme.textTheme.titleSmall?.copyWith(
+                                      color: c.overdue
+                                          ? scheme.error
+                                          : c.request != null
+                                              ? scheme.tertiary
+                                              : scheme.secondary))),
+                          c.overdue
+                              ? Icon(Icons.warning_amber, size: 20, color: scheme.error)
+                              : c.request != null
+                                  ? Icon(Icons.shopping_cart_outlined, size: 20, color: scheme.tertiary)
+                                  : Icon(Icons.play_circle_outline, size: 20, color: scheme.secondary),
                         ],
                       ),
                       const SizedBox(height: 2),
-                      Text(choreDueText(c, now), style: TextStyle(color: scheme.error)),
+                      if (c.inProgress != null)
+                        Text(startHeadText(context, c.inProgress!, now),
+                            style: TextStyle(color: scheme.secondary)),
+                      if (c.request != null) ...[
+                        Text(requestHeadText(c.request!, now),
+                            style: TextStyle(color: c.overdue ? scheme.error : scheme.tertiary)),
+                        for (final l in requestDetailLines(context, c.request!)) Text(l),
+                      ],
+                      // With a request, the reminder line only when it's overdue on its own.
+                      if ((c.request == null && c.inProgress == null) || thresholdOverdue(c, now))
+                        Text(choreDueText(c, now), style: TextStyle(color: scheme.error)),
                       Text(lastDoneText(context, c, now)),
                     ],
                   ),
