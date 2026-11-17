@@ -67,6 +67,31 @@ services:
       - ./embeddings_cache.npz:/app/embeddings_cache.npz
       - ./hf_cache:/app/hf_cache  # pretrained weights download once
 
+  # Pushes changed rows to Databricks every hour (export_databricks.py). Same image as
+  # cat-id, own process, so a slow or failing upload never touches the server. Outbound
+  # HTTPS only; nothing is opened. Does nothing until DATABRICKS_HOST and DATABRICKS_TOKEN
+  # are in .env. Logs: docker compose logs exporter
+  exporter:
+    image: ghcr.io/mokarromrahman/cat-id:${CAT_ID_TAG:-latest}
+    build:
+      context: .
+      args:
+        CAT_ID_VERSION: "${CAT_ID_VERSION:-dev}"
+        CAT_ID_COMMIT: "${CAT_ID_COMMIT:-}"
+    restart: unless-stopped
+    command: ["python", "export_databricks.py", "--loop"]
+    environment:
+      DATABASE_URL: "postgresql+psycopg://${POSTGRES_USER:-catid}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-catid}"
+      DATABRICKS_HOST: "${DATABRICKS_HOST:-}"
+      DATABRICKS_TOKEN: "${DATABRICKS_TOKEN:-}"
+      DATABRICKS_VOLUME_PATH: "${DATABRICKS_VOLUME_PATH:-/Volumes/cat_id/bronze/landing}"
+      EXPORT_INTERVAL_SECONDS: "${EXPORT_INTERVAL_SECONDS:-3600}"
+    depends_on:
+      db:
+        condition: service_started
+    volumes:
+      - ./inbox:/app/inbox        # only for --dry-run output
+
   db:
     image: postgres:18
     restart: unless-stopped

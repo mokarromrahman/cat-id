@@ -21,6 +21,9 @@ Tables (every one also has created_on, modified_by, modified_on):
               its Done or by Stop; at most one in progress per chore
   chore_request  a chore was marked as needing to be done (note, quantity + unit, needed-by
               date); closed by the next Done or cancelled; at most one open per chore
+  deleted_row a copy of every row hard-deleted from any other table (a trigger fills it), for
+              the Databricks export
+  export_state how far export_databricks.py has sent each table
 View active_vet_visit is vet_visit without the soft-deleted rows.
 
 The schema itself is created by Alembic (migrations/). The models here must match it;
@@ -44,7 +47,7 @@ from sqlalchemy import (
     Numeric, Text, Time, UniqueConstraint, create_engine, delete, func, or_, select, text,
 )
 from sqlalchemy.exc import OperationalError
-from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, aliased, mapped_column, sessionmaker
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
@@ -310,6 +313,39 @@ class ChoreRequest(Audit, Base):
     closed_by: Mapped[int | None] = mapped_column(ForeignKey("app_user.id", ondelete="RESTRICT"))
     # The webhook message announcing it, so it can be edited when it's done or cancelled.
     discord_message_id: Mapped[str | None] = mapped_column(Text)
+
+
+class DeletedRow(Audit, Base):
+    """A copy of every row hard-deleted from any other table (trigger record_deleted_row,
+    migration 0006), so export_databricks.py can tell Databricks about deletes. Today these are
+    undo's events and crop pictures, chore doers removed from a start, and cascaded doers.
+    modified_by is always the system user (a trigger can't know who deleted it)."""
+    __tablename__ = "deleted_row"
+    __table_args__ = (
+        Index("ix_deleted_row_table_name_modified_on", "table_name", "modified_on"),
+    )
+    id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
+    table_name: Mapped[str] = mapped_column(Text)
+    row_id: Mapped[int] = mapped_column(Integer)       # the deleted row's id
+    row_data: Mapped[dict] = mapped_column(JSONB)       # the whole row, to_jsonb(OLD)
+    deleted_on: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ExportState(Audit, Base):
+    """How far export_databricks.py has sent each table: rows with modified_on after
+    exported_through are sent next time. Delete a table's row to send it all again."""
+    __tablename__ = "export_state"
+    id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
+    table_name: Mapped[str] = mapped_column(Text, unique=True)
+    exported_through: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_run_on: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_file: Mapped[str | None] = mapped_column(Text)   # None when nothing changed
+    last_row_count: Mapped[int] = mapped_column(Integer)
+
+
+# Tables export_databricks.py never sends as their own folder: deleted_row goes out inside
+# each table's files (as rows flagged _deleted), export_state is the exporter's bookkeeping.
+NOT_EXPORTED = ("deleted_row", "export_state")
 
 
 # ---------- connection ----------

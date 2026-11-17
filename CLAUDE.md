@@ -27,9 +27,11 @@ https://cat-id.<tailnet>.ts.net, only the owner's and Ashley's phones, only port
 | `events_api.py` | `/events`, `/event_types`, `/picture/{id}/image` for the app's Events tab (APIRouter included by `app.py`). |
 | `chores_api.py` | `/chores`, `/chore_events`, `/chore_requests`, `/chore_starts` for the app's Chores page (APIRouter included by `app.py`). |
 | `chore_discord.py` | Chores Discord channel (`CHORES_DISCORD_WEBHOOK_URL`): request and start posts and their edits, "done"/"cancelled"/"needed again"/"stopped" messages. Background tasks from `chores_api.py`. |
-| `alembic.ini`, `migrations/` | Alembic. `0001_initial_schema.py`: tables, CHECKs, audit trigger, `active_vet_visit` view, seed rows. `0002_location_and_litterbox_clean.py`: `location`, `litterbox_clean_event`, `location_id` on `picture`/`event`, backfill of the Pi's photos to basement. `0003_chores.py`: `chore`, `chore_event`, `chore_event_doer`, `app_user.human`, seed chores. `0004_chore_requests.py`: `chore_request` (partial unique index: one open per chore). `0005_chore_starts.py`: `chore_start`, `chore_start_doer`, `chore_event.started_on` (CHECK `started_on <= event_timestamp`). |
+| `alembic.ini`, `migrations/` | Alembic. `0001_initial_schema.py`: tables, CHECKs, audit trigger, `active_vet_visit` view, seed rows. `0002_location_and_litterbox_clean.py`: `location`, `litterbox_clean_event`, `location_id` on `picture`/`event`, backfill of the Pi's photos to basement. `0003_chores.py`: `chore`, `chore_event`, `chore_event_doer`, `app_user.human`, seed chores. `0004_chore_requests.py`: `chore_request` (partial unique index: one open per chore). `0005_chore_starts.py`: `chore_start`, `chore_start_doer`, `chore_event.started_on` (CHECK `started_on <= event_timestamp`). `0006_databricks_export.py`: `deleted_row`, `export_state`, `record_deleted_row()` delete trigger on every table. |
 | `start.py` | Container entry point: waits up to 30 s for Postgres, runs `alembic upgrade head`, then starts uvicorn either way. |
 | `replay_db_failed.py` | Replays `inbox/_db_failed.jsonl` (writes that failed while Postgres was down). |
+| `export_databricks.py` | Pushes changed rows to Databricks as Parquet (Files API, outbound HTTPS only). Runs as the `exporter` compose service (`--loop`, hourly); `--dry-run DIR` writes the files locally. See "Databricks export" below. |
+| `databricks/` | Databricks side: `setup.sql` (schemas, volume), `pipeline/bronze_silver.py` and `pipeline/gold.sql` (one Lakeflow declarative pipeline), `README.md` (setup steps, checks). |
 | `sorter_core.py` | Framework-free photo sorter shared by `label.py` and `/label`: undo history, crop/rotate, archive, delete, log. Optional `on_action` callback (server only) updates the DB. |
 | `ui/label.{html,css,js}` | The shared label page. Button colours: Litten `#d62828`, Shinx `#f4c20d`, neither `#9a9a9a`, both `#7b4bb5`. Server only: event-type picker and `?user=`. |
 | `img_src/` | Pokémon-style button art (`litten_pokemon.png`, `shinx_pokemon.png`, ...) served at `/asset/<file>`; `app_icon.jpg` for the Android app. |
@@ -38,7 +40,7 @@ https://cat-id.<tailnet>.ts.net, only the owner's and Ashley's phones, only port
 | `phone_control.py` | `PhoneController` (pure-python-adb): wake screen, take photo, fetch newest file from `/sdcard/DCIM/Camera/`. Needs an `adb` server running on the Pi. |
 | `pi_requirements.txt` | Pi-only deps: pure-python-adb, gpiozero, lgpio, requests, python-dotenv |
 | `cat_id_app/` | Flutter Android app (see below). Excluded in `.dockerignore`. Walking-cat sprites in `cat_id_app/assets/sprites/` (`tool/fetch_sprites.py`). |
-| `Dockerfile`, `docker-compose.yml` | `python:3.14-slim`; bind mounts for `data/`, `inbox/`, `model.joblib`, `embeddings_cache.npz`, `hf_cache/`; `db` Postgres 18 service; `tailscale` sidecar (cat-id uses its network, so port 8000 is published on it; Serve config inline under `configs:` because `deploy.yml` checks out only the compose file; login kept in the `tailscale-state` volume; `TS_AUTHKEY` in `.env` for the first start). |
+| `Dockerfile`, `docker-compose.yml` | `python:3.14-slim`; bind mounts for `data/`, `inbox/`, `model.joblib`, `embeddings_cache.npz`, `hf_cache/`; `db` Postgres 18 service; `exporter` (same image, runs `export_databricks.py --loop`); `tailscale` sidecar (cat-id uses its network, so port 8000 is published on it; Serve config inline under `configs:` because `deploy.yml` checks out only the compose file; login kept in the `tailscale-state` volume; `TS_AUTHKEY` in `.env` for the first start). |
 
 Not in git: `data/`, `inbox/`, `model.joblib`, `embeddings_cache.npz`, `hf_cache/`, `.env`.
 
@@ -132,7 +134,7 @@ Not in git: `data/`, `inbox/`, `model.joblib`, `embeddings_cache.npz`, `hf_cache
   gotcha day 2023-11-21), `event_type` (`litterbox`/Litterbox, `cough`/Cough: code + display
   name), `label` (Litten, Shinx, neither, both, with optional cat), `picture`, `event`,
   `vet_visit`, `location` (`basement`/Basement, `master_bathroom`/Master Bathroom: unique `name`
-  + `label_name`), `litterbox_clean_event`, `chore`, `chore_event`, `chore_event_doer`, `chore_request`, `chore_start`, `chore_start_doer`. View `active_vet_visit`. Diagram: https://claude.ai/artifact/NsFLSjW8gcAGmHAmhoJRYa
+  + `label_name`), `litterbox_clean_event`, `chore`, `chore_event`, `chore_event_doer`, `chore_request`, `chore_start`, `chore_start_doer`, `deleted_row`, `export_state` (both for the Databricks export). View `active_vet_visit`. Diagram: https://claude.ai/artifact/NsFLSjW8gcAGmHAmhoJRYa
 - A trigger on every table sets `modified_on` on insert/update (DBeaver edits too) and fills an
   empty `modified_by` with `system`. Integer identity IDs. No edit-history table.
 - `user` on every request is an `app_user` name; missing or unknown means `system`.
@@ -210,16 +212,28 @@ Not in git: `data/`, `inbox/`, `model.joblib`, `embeddings_cache.npz`, `hf_cache
   exits non-zero is adopted by Postgres, which then crash-restarts.
 - Changing the schema: edit `db.py`, `alembic revision --autogenerate -m "..."` (in the
   container), review it, `alembic check` must say no changes. Recreate `active_vet_visit` if
-  `vet_visit` gains columns (`SELECT *` is frozen at creation).
+  `vet_visit` gains columns (`SELECT *` is frozen at creation). A new table also needs
+  `CREATE TRIGGER <table>_deleted AFTER DELETE ON <table> FOR EACH ROW EXECUTE FUNCTION
+  record_deleted_row()` in its migration (as well as the audit trigger), or the Databricks
+  export misses its deletes. Renaming/dropping a column: see `databricks/README.md`.
 - `event.picture_id` stays nullable for every type (no trigger requiring a photo); the app
   shows a placeholder when there's none.
 - Time zones: Edmonton is UTC-6 all year from Nov 2026 (tzdata 2026c; last clock change Mar 8,
   2026). The server uses the pip `tzdata` package (`PYTHONTZPATH=` in the Dockerfile) so an old
   base-image copy can't shift days by an hour. Day boundaries come from
   `events_api.local_midnight()`.
-- Not built yet: the Databricks export (push batches of new rows
-  to cloud storage for Auto Loader; select by `created_on`/`modified_on`, since events can be
-  created long after `event_timestamp`).
+- Databricks export (`export_databricks.py`, `databricks/`; decided Nov 2026): the
+  `exporter` service sends, every hour, each table's rows with `modified_on` after its
+  watermark (`export_state.exported_through`) plus its rows deleted since (`deleted_row`,
+  rebuilt with `jsonb_populate_record`, flagged `_deleted`), as one Parquet file per table to
+  `/Volumes/cat_id/bronze/landing/<table>/` (Databricks Free Edition, catalog `cat_id`). One
+  REPEATABLE READ snapshot per run; the watermark moves to run start minus 5 min only after
+  that table's upload succeeds (so some rows go twice; silver dedupes). First run sends
+  everything (and an empty file for empty tables). Without `DATABRICKS_HOST`/`DATABRICKS_TOKEN`
+  in `.env` it does nothing. In Databricks one triggered pipeline, run daily: bronze (Auto
+  Loader, append-only) and silver (AUTO CDC, SCD type 1, `is_deleted`/`deleted_at` for hard
+  deletes) per table, found from the volume's folders; gold per question. `deleted_row`'s
+  `modified_by` is always `system`.
 
 ## Android app (`cat_id_app/`)
 
