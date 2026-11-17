@@ -29,7 +29,7 @@ https://cat-id.<tailnet>.ts.net, only the owner's and Ashley's phones, only port
 | `app_update_api.py` | `/app_update` routes (APIRouter included by `app.py`): the app's update APKs from `app_updates/`. |
 | `deploy_app_update.py` | Run by `deploy.yml` on the server before the restart: downloads the tag's APK and release notes from its GitHub Release (with the workflow's `GITHUB_TOKEN`, so it works on a private repo) into `app_updates/<release|prerelease>/` (`cat-id.apk` + `info.json`: version, notes, sha256, published_at), replacing the channel's previous one. Channel `prerelease` for tags with a dash. Fails the deploy if the Release has no APK. Stdlib only, Python 3.8+. |
 | `chore_discord.py` | Chores Discord channel (`CHORES_DISCORD_WEBHOOK_URL`): request and start posts and their edits, "done"/"cancelled"/"needed again"/"stopped" messages. Background tasks from `chores_api.py`. |
-| `alembic.ini`, `migrations/` | Alembic. `0001_initial_schema.py`: tables, CHECKs, audit trigger, `active_vet_visit` view, seed rows. `0002_location_and_litterbox_clean.py`: `location`, `litterbox_clean_event`, `location_id` on `picture`/`event`, backfill of the Pi's photos to basement. `0003_chores.py`: `chore`, `chore_event`, `chore_event_doer`, `app_user.human`, seed chores. `0004_chore_requests.py`: `chore_request` (partial unique index: one open per chore). `0005_chore_starts.py`: `chore_start`, `chore_start_doer`, `chore_event.started_on` (CHECK `started_on <= event_timestamp`). |
+| `alembic.ini`, `migrations/` | Alembic. `0001_initial_schema.py`: tables, CHECKs, audit trigger, `active_vet_visit` view, seed rows. `0002_location_and_litterbox_clean.py`: `location`, `litterbox_clean_event`, `location_id` on `picture`/`event`, backfill of the Pi's photos to basement. `0003_chores.py`: `chore`, `chore_event`, `chore_event_doer`, `app_user.human`, seed chores. `0004_chore_requests.py`: `chore_request` (partial unique index: one open per chore). `0005_chore_starts.py`: `chore_start`, `chore_start_doer`, `chore_event.started_on` (CHECK `started_on <= event_timestamp`). `0006_litterbox_cleaned_by.py`: `litterbox_clean_event.cleaned_by` (backfilled with the reporter when that's a person). |
 | `start.py` | Container entry point: waits up to 30 s for Postgres, runs `alembic upgrade head`, then starts uvicorn either way. |
 | `replay_db_failed.py` | Replays `inbox/_db_failed.jsonl` (writes that failed while Postgres was down). |
 | `sorter_core.py` | Framework-free photo sorter shared by `label.py` and `/label`: undo history, crop/rotate, archive, delete, log. Optional `on_action` callback (server only) updates the DB. |
@@ -65,10 +65,13 @@ build stops the deploy, so the server and the APK it offers always match.
   `DISCORD_WEBHOOK_URL`, `null` if that isn't set. No `cat` and no `file` gives 400; an unknown
   location gives 400.
 - `POST /litterbox_clean` (form `location`, `key`, optional `bag_changed` true/false (default
-  false), `info`, `user`, `event_time`): records a `litterbox_clean_event` row (db writer
-  `litterbox_clean`, after the response). `event_time` as for `/cough`; `server_timestamp` is
-  the arrival time. No Discord. Returns `{status, location, message}`. Missing/unknown
-  location, bad `bag_changed` or `event_time`: 400, nothing saved.
+  false), `info`, `user`, `event_time`, `cleaned_by`): records a `litterbox_clean_event` row
+  (db writer `litterbox_clean`, after the response). `event_time` as for `/cough`;
+  `server_timestamp` is the arrival time. `user` is the reporter; `cleaned_by` is who did
+  the cleaning, a person (`app_user.human`); missing = `user` (null if that isn't a person,
+  e.g. `pi`). No Discord. Returns `{status, location, cleaned_by, message}`. Missing/unknown
+  location, bad `bag_changed` or `event_time`, or a `cleaned_by` that isn't a person (checked
+  only while the DB is up; the writer then records null): 400, nothing saved.
 - `POST /cough` (form `cat`, `key`, optional `info`, `user`, `file`): records a cough event, posts a
   text report to `COUGH_DISCORD_WEBHOOK_URL`. Returns `null` (200) if that webhook isn't set
   (the event is still recorded). Checks the key but not the model. An optional photo is
@@ -118,7 +121,8 @@ build stops the deploy, so the server and the APK it offers always match.
   `app_update_api.py`. Not in `/health` on purpose: `/health` has no key check.
 - `GET /health`: `{model_loaded, classes, photos: {class: count}, waiting_in_inbox, version,
   commit, litterboxes, chores}`. `litterboxes`: per location `{location, name, last_cleaned,
-  bag_last_changed}` (UTC, null if never), or null if the DB is down (`db.litterbox_status()`).
+  last_cleaned_by, bag_last_changed}` (UTC, null if never; `last_cleaned_by` is the newest
+  clean's `cleaned_by`, null if not known), or null if the DB is down (`db.litterbox_status()`).
   `chores`: the active chores, same objects as `GET /chores` (`db.chore_rows()`), or null if
   the DB is down. `version`/`commit` come from the `CAT_ID_VERSION`/`CAT_ID_COMMIT` build args baked
   into the image (`release.yml` passes the tag and `github.sha`); a local build says `dev` and
@@ -172,7 +176,8 @@ build stops the deploy, so the server and the APK it offers always match.
   deleted.
 - `litterbox_clean_event`: `location_id` (required), `event_timestamp` (when it was cleaned),
   `server_timestamp` (when the request arrived; differs from `created_on` only for a replayed
-  row), `reporter_id`, `bag_changed` (bool, default false), `notes`. No cat, no photo, not in
+  row), `reporter_id` (who sent it), `cleaned_by` (nullable, a person: who did the cleaning;
+  null = not known), `bag_changed` (bool, default false), `notes`. No cat, no photo, not in
   `/events`.
 - `chore`: `name` (unique snake_case code, CHECK `^[a-z0-9_]+$`, never changes; the API makes
   it from `label_name`), `label_name` (display), `warning_threshold_days` (nullable = no
@@ -248,7 +253,9 @@ optional photo
 from gallery or camera, "Send to Discord" (a camera photo lost to Android closing the app
 comes back on Identify). Litterbox also has "Which litterbox?" (Basement default, or Master
 Bathroom). Clean Litterbox (`ReportKind.clean`): pick the box instead of a cat, When,
-"Bag changed" switch, note, no photo, "Save" (no Discord). Locations are `kLitterboxLocations`
+"Cleaned by" (one chip per person from `GET /chores`' `people`, preselected with Who am I;
+required, so Save waits for a pick when Who am I isn't set; sent as `cleaned_by`, while
+`user` stays the reporter), "Bag changed" switch, note, no photo, "Save" (no Discord). Locations are `kLitterboxLocations`
 in `api.dart` (keep in step with the `location` table). The Identify tab only identifies (no Discord button; that moved
 to Add event > Litterbox).
 
@@ -285,7 +292,8 @@ to Add event > Litterbox).
 - Health tab: a Chores card with the overdue chores, the ones marked as needed (with the
   request's line and details) and the ones in progress (who, since when), or "Nothing
   overdue or needed" (hidden for
-  servers without `chores`). A Litterboxes card per location: "Last cleaned <day, time> (<ago>)", red with a
+  servers without `chores`). A Litterboxes card per location: "Last cleaned <day, time> (<ago>) by <name>" (no "by"
+  when not known), red with a
   warning icon when over 24 h or never (`kCleanOverdueAfter`), and "Bag was last changed <day,
   time>" (no highlight). Hidden for servers without `litterboxes`.
 - In-app updates (`lib/app_update.dart`): the app knows its version from
@@ -348,7 +356,7 @@ to Add event > Litterbox).
   `FilterQuality.none`.
 - `api.dart`: `health()`, `identify(path, sendToDiscord:)` (`/identify` or `/litterbox`; the app now only
   uses `/identify`), `cough(cat, info, photoPath:, when:)`, `litterbox(cat, info, photoPath:, when:, location:)`,
-  `litterboxClean(location, bagChanged:, info:, when:)`, `vetVisits`, `addVetVisits`, `editVetVisit`, `deleteVetVisit`,
+  `litterboxClean(location, bagChanged:, info:, when:, cleanedBy:)`, `vetVisits`, `addVetVisits`, `editVetVisit`, `deleteVetVisit`,
   `restoreVetVisit`, `eventTypes`, `events`, `pictureUri`, `retrain()`, `chores`, `addChore`, `editChore`,
   `choreEvents`, `addChoreEvent`, `editChoreEvent`, `deleteChoreEvent`, `restoreChoreEvent`,
   `choreRequests`, `addChoreRequest`, `editChoreRequest`, `cancelChoreRequest`, `startChore`,

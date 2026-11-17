@@ -26,13 +26,15 @@ const kLitterboxLocations = [
   LitterboxLocation('master_bathroom', 'Master Bathroom'),
 ];
 
-/// One location's row of GET /health's `litterboxes`: when that box was last cleaned and
-/// when its bag was last changed (null = never recorded).
+/// One location's row of GET /health's `litterboxes`: when that box was last cleaned (and
+/// by whom, null = not known or an older server) and when its bag was last changed (null =
+/// never recorded).
 class LitterboxStatus {
   LitterboxStatus.fromJson(Map<String, dynamic> j)
       : location = j['location'] as String,
         name = (j['name'] as String?) ?? j['location'] as String,
         lastCleaned = _time(j['last_cleaned']),
+        lastCleanedBy = j['last_cleaned_by'] as String?,
         bagLastChanged = _time(j['bag_last_changed']);
 
   static DateTime? _time(dynamic v) => v is String ? DateTime.parse(v).toLocal() : null;
@@ -40,6 +42,7 @@ class LitterboxStatus {
   final String location;
   final String name;
   final DateTime? lastCleaned;
+  final String? lastCleanedBy;
   final DateTime? bagLastChanged;
 }
 
@@ -580,9 +583,11 @@ class CatApi {
   }
 
   /// POST /litterbox_clean: a litterbox was cleaned. [location] is a
-  /// [LitterboxLocation.name]; [when] as in [cough]. Nothing goes to Discord.
+  /// [LitterboxLocation.name]; [when] as in [cough]; [cleanedBy] is who did it (one of
+  /// [ChoreList.people]; null = not sent, the server then uses `user`). Nothing goes to
+  /// Discord.
   Future<void> litterboxClean(String location,
-      {required bool bagChanged, String info = '', DateTime? when}) async {
+      {required bool bagChanged, String info = '', DateTime? when, String? cleanedBy}) async {
     final r = await _guard(() async {
       final req = http.MultipartRequest('POST', _uri('/litterbox_clean'))
         ..fields['location'] = location
@@ -592,6 +597,7 @@ class CatApi {
       if (info.trim().isNotEmpty) req.fields['info'] = info.trim();
       final user = _user;
       if (user != null) req.fields['user'] = user;
+      if (cleanedBy != null) req.fields['cleaned_by'] = cleanedBy;
       final streamed = await req.send().timeout(const Duration(seconds: 30));
       return http.Response.fromStream(streamed);
     });

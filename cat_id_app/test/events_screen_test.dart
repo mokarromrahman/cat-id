@@ -50,6 +50,10 @@ class FakeServer {
       reports[req.url.path] = req.body;
       return _json({'status': 200, 'location': 'x', 'message': 'Litterbox clean recorded.'});
     }
+    if (req.method == 'GET' && req.url.path == '/chores') {
+      requests.add(req.url);
+      return _json({'chores': [], 'people': ['Ashley', 'Mac']});
+    }
     if (req.url.path == '/event_types') {
       requests.add(req.url);
       return _json([
@@ -104,13 +108,13 @@ class FakeServer {
       http.Response(jsonEncode(body), 200, headers: {'content-type': 'application/json'});
 }
 
-Future<ServerStore> _store() async {
+Future<ServerStore> _store({String? whoAmI = 'Mac'}) async {
   SharedPreferences.setMockInitialValues({
     'servers': jsonEncode([
       {'id': '1', 'name': 'Home', 'address': '192.168.1.116:8000'}
     ]),
     'selected_server': '1',
-    'who_am_i': 'Mac',
+    'who_am_i': ?whoAmI,
   });
   FlutterSecureStorage.setMockInitialValues({'apikey_1': 'test'});
   await WhoAmI.load();
@@ -402,12 +406,54 @@ void main() {
       await _tap(tester, find.text('Save'));
       final body = server.reports['/litterbox_clean']!;
       for (final field in [('location', 'basement'), ('bag_changed', 'true'),
-          ('info', 'full litter change'), ('user', 'Mac')]) {
+          ('info', 'full litter change'), ('user', 'Mac'), ('cleaned_by', 'Mac')]) {
         expect(body, contains('name="${field.$1}"\r\n\r\n${field.$2}\r\n'));
       }
       expect(body, contains('name="event_time"'));
-      expect(find.text('Basement cleaning saved (bag changed)'), findsOneWidget);
+      expect(find.text('Basement cleaning saved (bag changed), cleaned by Mac'), findsOneWidget);
       expect(server.reports.containsKey('/litterbox'), isFalse);
+    }, () => server.client);
+  });
+
+  testWidgets('Clean Litterbox: Cleaned by can be someone else; the sender stays the user',
+      (tester) async {
+    final server = FakeServer();
+    await http.runWithClient(() async {
+      await _pump(tester, await _store());
+      await _tap(tester, find.text('Add event'));
+      await _tap(tester, find.text('Clean Litterbox'));
+      await _tap(tester, find.text('Basement'));
+      expect(find.text('Cleaned by'), findsOneWidget);
+      final mac = tester.widget<ChoiceChip>(find.widgetWithText(ChoiceChip, 'Mac'));
+      expect(mac.selected, isTrue); // Who am I
+      await _tap(tester, find.widgetWithText(ChoiceChip, 'Ashley'));
+      await _tap(tester, find.text('Save'));
+      final body = server.reports['/litterbox_clean']!;
+      expect(body, contains('name="cleaned_by"\r\n\r\nAshley\r\n'));
+      expect(body, contains('name="user"\r\n\r\nMac\r\n'));
+      expect(find.text('Basement cleaning saved, cleaned by Ashley'), findsOneWidget);
+    }, () => server.client);
+  });
+
+  testWidgets('Clean Litterbox without Who am I: Save waits until someone is picked',
+      (tester) async {
+    final server = FakeServer();
+    await http.runWithClient(() async {
+      await _pump(tester, await _store(whoAmI: null));
+      await _tap(tester, find.text('Add event'));
+      await _tap(tester, find.text('Clean Litterbox'));
+      await _tap(tester, find.text('Basement'));
+      for (final p in ['Ashley', 'Mac']) {
+        expect(tester.widget<ChoiceChip>(find.widgetWithText(ChoiceChip, p)).selected, isFalse);
+      }
+      final save = find.widgetWithText(FilledButton, 'Save');
+      expect(tester.widget<FilledButton>(save).onPressed, isNull);
+      await _tap(tester, find.widgetWithText(ChoiceChip, 'Ashley'));
+      expect(tester.widget<FilledButton>(save).onPressed, isNotNull);
+      await _tap(tester, save);
+      final body = server.reports['/litterbox_clean']!;
+      expect(body, contains('name="cleaned_by"\r\n\r\nAshley\r\n'));
+      expect(body, isNot(contains('name="user"')));
     }, () => server.client);
   });
 }

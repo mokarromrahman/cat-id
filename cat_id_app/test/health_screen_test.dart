@@ -100,6 +100,7 @@ void main() {
       {
         'location': 'basement', 'name': 'Basement',
         'last_cleaned': now.subtract(const Duration(hours: 2)).toIso8601String(),
+        'last_cleaned_by': 'Ashley',
         'bag_last_changed': now.subtract(const Duration(days: 3)).toIso8601String(),
       },
       {'location': 'master_bathroom', 'name': 'Master Bathroom',
@@ -107,7 +108,8 @@ void main() {
        'bag_last_changed': null},
     ]));
     expect(find.text('Litterboxes', skipOffstage: false), findsOneWidget);
-    expect(find.textContaining('(2 h ago)', skipOffstage: false), findsOneWidget);
+    expect(find.textContaining('(2 h ago) by Ashley', skipOffstage: false), findsOneWidget);
+    expect(find.textContaining('(1 day ago) by', skipOffstage: false), findsNothing); // not known
     expect(find.textContaining('Bag was last changed', skipOffstage: false), findsOneWidget);
     expect(find.text('Bag change not recorded yet', skipOffstage: false), findsOneWidget);
     expect(find.textContaining('(1 day ago)', skipOffstage: false), findsOneWidget);

@@ -15,10 +15,14 @@ POST /litterbox  same as /identify (source litterbox), and also posts the result
                  that webhook isn't set (the event is still recorded). An unknown location
                  gives 400 either way
 POST /litterbox_clean  form: location, key, optional bag_changed (true/false, default
-                 false), info, user, event_time -> records a litterbox_clean_event row
-                 (event_time as for /cough; server_timestamp = arrival time). No Discord.
-                 Returns {"status": 200, "location", "message"}. Unknown location or a bad
-                 event_time: 400, nothing recorded
+                 false), info, user, event_time, cleaned_by -> records a
+                 litterbox_clean_event row (event_time as for /cough; server_timestamp =
+                 arrival time). `cleaned_by`: who did the cleaning, a person
+                 (app_user.human; GET /chores lists them as `people`); missing = `user`
+                 (null if that isn't a person, e.g. pi); `user` stays the reporter. No Discord. Returns {"status": 200, "location",
+                 "cleaned_by", "message"}. Unknown location, a bad event_time or a
+                 cleaned_by that isn't a person: 400, nothing recorded (cleaned_by is only
+                 checked while the DB is up)
 POST /cough      form: cat, key, optional info, user, file, event_time -> records a
                  cough event and posts to the cough Discord channel; returns null if that
                  webhook isn't set (the event is still recorded). A photo in `file` is
@@ -51,7 +55,8 @@ GET  /health     is the model loaded, which classes it knows, how many training
                  many captures are waiting to be sorted in inbox/ (the "N left"
                  on /label), and which server build this is (the release tag and full
                  commit hash; "dev" and null for a local build), and per litterbox when
-                 it was last cleaned and its bag last changed (UTC; null if never;
+                 it was last cleaned, by whom (`last_cleaned_by`, a person's name or null)
+                 and its bag last changed (UTC; null if never;
                  `litterboxes` is null if the database is down), and the active chores
                  with when each was last done and whether it's overdue (`chores`, the same
                  chore objects as GET /chores; null if the database is down):
@@ -61,6 +66,7 @@ GET  /health     is the model loaded, which classes it knows, how many training
                   "commit": "433c253...",
                   "litterboxes": [{"location": "basement", "name": "Basement",
                                    "last_cleaned": "2026-11-15T15:02:00+00:00",
+                                   "last_cleaned_by": "Ashley",
                                    "bag_last_changed": null}, ...],
                   "chores": [{"id": 1, "name": "vacuum", "label_name": "Vacuum",
                               "warning_threshold_days": 7, "active": true,
@@ -345,9 +351,11 @@ def report_event(tasks: BackgroundTasks, kind: str, *, raw: bytes, cat: str, inf
 @app.post("/litterbox_clean")
 def litterbox_clean(tasks: BackgroundTasks, location: str = Form(""), key: str = Form(""),
                     bag_changed: str = Form("false"), info: str = Form(""),
-                    user: str = Form(""), event_time: str = Form("")):
+                    user: str = Form(""), event_time: str = Form(""),
+                    cleaned_by: str | None = Form(None)):
     """A litterbox was cleaned (the app's Add event > Clean Litterbox). Recorded after the
-    response like the other writes; no Discord post."""
+    response like the other writes; no Discord post. `user` is who sent it, `cleaned_by`
+    who cleaned it (missing: `user`)."""
     received = db.utcnow()
     check_key(key)
     where = check_location(location)
@@ -357,12 +365,23 @@ def litterbox_clean(tasks: BackgroundTasks, location: str = Form(""), key: str =
     if flag not in ("true", "false", "1", "0", "yes", "no", "on", "off", ""):
         raise HTTPException(400, "bag_changed must be true or false")
     happened = parse_event_time(event_time, received)
+    # Who cleaned it: `cleaned_by`, or the sender when it's missing (older app). A
+    # cleaned_by that isn't a person is refused; a sender who isn't one (pi, system) just
+    # means not known. Checked only while the DB is up (the writer checks again).
+    by = (user if cleaned_by is None else cleaned_by).strip() or None
+    people = db.people() if by is not None else None
+    if people is not None and by not in people:
+        if cleaned_by is not None:
+            raise HTTPException(400, f"cleaned_by {by!r} isn't a person (known: {', '.join(people)})")
+        by = None
     tasks.add_task(db.safe_write, "litterbox_clean", {
-        "location": where, "user": user or None, "notes": info.strip() or None,
+        "location": where, "user": user or None, "cleaned_by": by,
+        "notes": info.strip() or None,
         "bag_changed": flag in ("true", "1", "yes", "on"),
         "event_timestamp": happened, "server_timestamp": received,
     })
-    return {"status": 200, "location": where, "message": "Litterbox clean recorded."}
+    return {"status": 200, "location": where, "cleaned_by": by,
+            "message": "Litterbox clean recorded."}
 
 
 def class_names():

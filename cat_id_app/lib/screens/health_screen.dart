@@ -211,7 +211,8 @@ class _HealthScreenState extends State<HealthScreen> {
                     Text(
                       cleaned == null
                           ? 'Never cleaned (none recorded yet)'
-                          : 'Last cleaned ${_dayTime(cleaned)} (${agoText(cleaned, now)})',
+                          : 'Last cleaned ${_dayTime(cleaned)} (${agoText(cleaned, now)})'
+                              '${b.lastCleanedBy == null ? '' : ' by ${b.lastCleanedBy}'}',
                       style: TextStyle(color: warn),
                     ),
                     Text(bag == null

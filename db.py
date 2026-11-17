@@ -197,7 +197,10 @@ class LitterboxCleanEvent(Audit, Base):
     event_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     # ... and when the request reached the server (created_on differs only for a replayed row).
     server_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # Who sent it (reporter) and who did the cleaning (a person, app_user.human; picked in
+    # the app, default the sender; None = not known).
     reporter_id: Mapped[int] = mapped_column(ForeignKey("app_user.id", ondelete="RESTRICT"))
+    cleaned_by: Mapped[int | None] = mapped_column(ForeignKey("app_user.id", ondelete="RESTRICT"))
     bag_changed: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
     notes: Mapped[str | None] = mapped_column(Text)
 
@@ -479,20 +482,37 @@ def locations() -> list[dict]:
 
 
 def litterbox_status():
-    """For GET /health: per location, when it was last cleaned and when its bag was last
-    changed (UTC ISO text, or None if never). None if the database can't be reached."""
+    """For GET /health: per location, when it was last cleaned (and by whom) and when its
+    bag was last changed (UTC ISO text / name, or None if never or not known). None if the
+    database can't be reached."""
     def read(s):
         last = (select(LitterboxCleanEvent.location_id,
                        func.max(LitterboxCleanEvent.event_timestamp).label("cleaned"),
                        func.max(LitterboxCleanEvent.event_timestamp)
                        .filter(LitterboxCleanEvent.bag_changed).label("bag"))
                 .group_by(LitterboxCleanEvent.location_id).subquery())
+        # Who did the newest clean per location (the newest id wins a tie on time).
+        newest = (select(LitterboxCleanEvent.location_id, AppUser.name.label("by"))
+                  .outerjoin(AppUser, AppUser.id == LitterboxCleanEvent.cleaned_by)
+                  .distinct(LitterboxCleanEvent.location_id)
+                  .order_by(LitterboxCleanEvent.location_id,
+                            LitterboxCleanEvent.event_timestamp.desc(),
+                            LitterboxCleanEvent.id.desc())
+                  .subquery())
         rows = s.execute(
-            select(Location.name, Location.label_name, last.c.cleaned, last.c.bag)
-            .outerjoin(last, last.c.location_id == Location.id).order_by(Location.id))
-        return [{"location": n, "name": l, "last_cleaned": _iso(c), "bag_last_changed": _iso(b)}
-                for n, l, c, b in rows]
+            select(Location.name, Location.label_name, last.c.cleaned, last.c.bag, newest.c.by)
+            .outerjoin(last, last.c.location_id == Location.id)
+            .outerjoin(newest, newest.c.location_id == Location.id).order_by(Location.id))
+        return [{"location": n, "name": l, "last_cleaned": _iso(c), "last_cleaned_by": by,
+                 "bag_last_changed": _iso(b)}
+                for n, l, c, b, by in rows]
     return safe_read(read, None)
+
+
+def people() -> list[str] | None:
+    """Names of the people (app_user.human), alphabetical; None if the DB is down."""
+    return safe_read(lambda s: list(s.scalars(
+        select(AppUser.name).where(AppUser.human).order_by(AppUser.name))), None)
 
 
 def _iso(t):
@@ -850,8 +870,15 @@ def add_litterbox_clean(session, p):
         print(f"litterbox clean for unknown location {p['location']!r}: nothing recorded")
         return None
     uid = user_id(session, p.get("user"))
+    # Who cleaned it: a person's name; missing (older app, or a replay from before this
+    # field) means the sender. Not a person (or unknown): not known.
+    by_name = p["cleaned_by"] if "cleaned_by" in p else p.get("user")
+    by = session.scalar(select(AppUser.id).where(AppUser.name == by_name, AppUser.human)) \
+        if by_name else None
+    if by_name and by is None:
+        print(f"litterbox clean by {by_name!r}, not a person: recorded without who cleaned it")
     session.add(LitterboxCleanEvent(
         location_id=loc, event_timestamp=as_datetime(p["event_timestamp"]),
-        server_timestamp=as_datetime(p["server_timestamp"]), reporter_id=uid,
+        server_timestamp=as_datetime(p["server_timestamp"]), reporter_id=uid, cleaned_by=by,
         bag_changed=bool(p["bag_changed"]), notes=p.get("notes"), modified_by=uid))
     return None

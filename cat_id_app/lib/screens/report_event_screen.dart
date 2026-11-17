@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 import '../api.dart';
 import '../camera_recovery.dart';
 import '../server_store.dart';
+import '../who_am_i.dart';
 
 // Same colours as the label page (ui/label.css).
 const _littenColor = Color(0xFFD62828);
@@ -28,7 +29,9 @@ enum ReportKind {
 /// when it happened (default now; any past date and time), add a note and a photo if you
 /// like, and the server records the event and posts it to
 /// Discord. A litterbox visit also says which box (Basement unless changed). A cleaning
-/// picks the box instead of a cat, plus "Bag changed"; it is only saved, not posted. The photo also goes to the server's label queue and shows on the event in the
+/// picks the box instead of a cat, plus "Bag changed" and who cleaned it ("Cleaned by",
+/// the server's people from GET /chores, preselected with Who am I; the sender is still
+/// recorded as the reporter); it is only saved, not posted. The photo also goes to the server's label queue and shows on the event in the
 /// Events tab. The cat pictures are the same img_src/ files the label pages use, loaded
 /// from the server's /asset/ route, so there is only one copy of them.
 class ReportEventScreen extends StatefulWidget {
@@ -62,7 +65,16 @@ class _ReportEventScreenState extends State<ReportEventScreen> {
   String _visitLocation = kLitterboxLocations.first.name;
   bool _bagChanged = false;
 
+  /// Clean: who can be picked as having cleaned it (null while loading or after an error),
+  /// why they couldn't be loaded, and who is picked (required to save).
+  List<String>? _people;
+  String? _peopleError;
+  String? _cleanedBy;
+
   bool get _isClean => widget.kind == ReportKind.clean;
+
+  /// Everything needed to send is filled in.
+  bool get _canSend => _ready && (!_isClean || _cleanedBy != null);
 
   /// The main choice is made: a cat, or the box for a cleaning.
   bool get _ready => _isClean ? _cleanLocation != null : _cat != null;
@@ -71,9 +83,43 @@ class _ReportEventScreenState extends State<ReportEventScreen> {
   DateTime? _when;
 
   @override
+  void initState() {
+    super.initState();
+    if (_isClean) _loadPeople();
+  }
+
+  @override
   void dispose() {
     _info.dispose();
     super.dispose();
+  }
+
+  /// Who am I if that's one of [_people], else nobody.
+  String? get _defaultCleaner {
+    final me = WhoAmI.current;
+    return me != null && (_people?.contains(me) ?? false) ? me : null;
+  }
+
+  Future<void> _loadPeople() async {
+    setState(() {
+      _people = null;
+      _peopleError = null;
+    });
+    try {
+      final key = await widget.store.keyFor(widget.server.id);
+      final list = await CatApi(widget.server, key).chores();
+      if (!mounted) return;
+      setState(() {
+        _people = list.people;
+        _cleanedBy ??= _defaultCleaner;
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() => _peopleError = e.message);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _peopleError = '$e');
+    }
   }
 
   String _assetUrl(String file) =>
@@ -172,7 +218,7 @@ class _ReportEventScreenState extends State<ReportEventScreen> {
   }
 
   Future<void> _send() async {
-    if (!_ready || _busy) return;
+    if (!_canSend || _busy) return;
     final cat = _cat;
     final cleaned = _cleanLocation;
     setState(() {
@@ -195,9 +241,9 @@ class _ReportEventScreenState extends State<ReportEventScreen> {
           sent = 'Sent to Discord for $cat';
         case ReportKind.clean:
           await api.litterboxClean(cleaned!,
-              bagChanged: _bagChanged, info: _info.text, when: _when);
+              bagChanged: _bagChanged, info: _info.text, when: _when, cleanedBy: _cleanedBy);
           sent = '${_locationLabel(cleaned)} cleaning saved'
-              '${_bagChanged ? ' (bag changed)' : ''}';
+              '${_bagChanged ? ' (bag changed)' : ''}, cleaned by $_cleanedBy';
       }
       if (cat != null) widget.onSent?.call(cat); // cleanings aren't for a cat
       if (!mounted) return;
@@ -206,6 +252,7 @@ class _ReportEventScreenState extends State<ReportEventScreen> {
         _cat = null; // ready for the next report
         _cleanLocation = null;
         _bagChanged = false;
+        _cleanedBy = _defaultCleaner;
         _info.clear();
         _photo = null;
         _when = null;
@@ -220,6 +267,40 @@ class _ReportEventScreenState extends State<ReportEventScreen> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  /// Clean: one chip per person (pick one), or loading / why the list couldn't be loaded.
+  Widget _cleanedBySection(ThemeData theme) {
+    final people = _people;
+    if (_peopleError != null) {
+      return Row(
+        children: [
+          Expanded(
+            child: Text("Couldn't load who can be picked: $_peopleError",
+                style: TextStyle(color: theme.colorScheme.error)),
+          ),
+          TextButton(onPressed: _busy ? null : _loadPeople, child: const Text('Retry')),
+        ],
+      );
+    }
+    if (people == null) return const LinearProgressIndicator();
+    return Wrap(
+      spacing: 8,
+      runSpacing: 4,
+      children: [
+        for (final p in people)
+          ChoiceChip(
+            label: Text(p),
+            selected: _cleanedBy == p,
+            onSelected: _busy
+                ? null
+                : (on) => setState(() {
+                      _cleanedBy = on ? p : null;
+                      _sent = null;
+                    }),
+          ),
+      ],
+    );
   }
 
   /// Optional photo: Gallery / Camera buttons, then a preview with a remove button.
@@ -363,6 +444,10 @@ class _ReportEventScreenState extends State<ReportEventScreen> {
             ),
           ),
           if (_isClean) ...[
+            const SizedBox(height: 16),
+            Text('Cleaned by', style: theme.textTheme.titleSmall),
+            const SizedBox(height: 8),
+            _cleanedBySection(theme),
             const SizedBox(height: 8),
             SwitchListTile(
               contentPadding: const EdgeInsets.symmetric(horizontal: 4),
@@ -395,7 +480,7 @@ class _ReportEventScreenState extends State<ReportEventScreen> {
         FilledButton.icon(
           icon: Icon(_isClean ? Icons.save_outlined : Icons.send),
           label: Text(_isClean ? 'Save' : 'Send to Discord'),
-          onPressed: !_ready || _busy ? null : _send,
+          onPressed: !_canSend || _busy ? null : _send,
         ),
         const SizedBox(height: 16),
         if (_busy) const Center(child: CircularProgressIndicator()),
