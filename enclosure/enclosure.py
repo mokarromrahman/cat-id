@@ -295,6 +295,56 @@ def case_tray_hung():
     return t
 
 
+# --- PIR holder under the floor (for a body printed with the original wire hole) -----------
+# The HC-SR501's 3-pin header stands straight up from the back of its board, and with jumper
+# plugs on it reaches ~25 mm: too tall for the 14 mm between the floor and the shelf, and the
+# shelf's wire hole isn't over the pins. This holder takes the sensor *under* the floor instead:
+# the board sits in a cup, dome down through the cup's bottom, component side up, and the
+# plugs and wires go up through the floor's original dome hole (header toward the front, where
+# the hole's teardrop tip leaves room for the plugs), then up through the shelf's hole to the Pi.
+# The cup is held to the underside of the floor with double-sided foam tape on its flange, plus
+# four optional screws. The floor's two M2 posts on top go unused.
+PIR_BOARD = (32.2, 24.3)
+PIR_COMPONENT_ROOM = 7.0  # board back to the floor's underside (folded caps, pots, jumper)
+PIR_LEDGE_T = 3.0         # the board's two ends rest on this; M2 screws into it
+PIR_LENS_OPENING = (24.4, 24.8)  # x, y: the lens's square base (~24 mm) passes through
+PIR_CUP_CLR = 0.5
+PIR_CUP_WALL = 2.0
+PIR_FLANGE = (52.0, 38.0)  # x, y: taped to the floor's underside
+PIR_FLANGE_T = 2.0
+PIR_FLANGE_SCREW = 2.4     # optional #2 / M2.5 self-tapping screws up into the floor
+
+
+def pir_mount_hung():
+    """Hung coordinates: z = 0 is the underside of the body's floor."""
+    px, py = PIR_C
+    iw, idp = PIR_BOARD[0] + 2 * PIR_CUP_CLR, PIR_BOARD[1] + 2 * PIR_CUP_CLR
+    ow, od = iw + 2 * PIR_CUP_WALL, idp + 2 * PIR_CUP_WALL
+    board_z = -(PIR_COMPONENT_ROOM + PCB_T)          # the board's dome-side face
+    zb = board_z - PIR_LEDGE_T                       # bottom of the cup
+    cup = _box(px - ow / 2, py - od / 2, zb, px + ow / 2, py + od / 2, 0)
+    # flange on top, with a sloped skirt under it so it prints without supports
+    fz = -PIR_FLANGE_T
+    skirt_h = (PIR_FLANGE[0] - ow) / 2 * 1.06        # a little steeper than 45 degrees
+    top = bd.Plane.XY.offset(fz) * bd.Pos(px, py) * bd.Rectangle(*PIR_FLANGE)
+    low = bd.Plane.XY.offset(fz - skirt_h) * bd.Pos(px, py) * bd.Rectangle(ow, od)
+    m = cup + bd.loft([low, top]) + _box(px - PIR_FLANGE[0] / 2, py - PIR_FLANGE[1] / 2, fz, px + PIR_FLANGE[0] / 2, py + PIR_FLANGE[1] / 2, 0)
+    # inside: room for the board and its components, open at the top to the floor's hole
+    m -= _box(px - iw / 2, py - idp / 2, board_z, px + iw / 2, py + idp / 2, 1)
+    # bottom: the lens's square base and the dome pass through
+    lx, ly = PIR_LENS_OPENING
+    m -= _box(px - lx / 2, py - ly / 2, zb - 1, px + lx / 2, py + ly / 2, board_z + 1)
+    # M2 pilot holes for the board's two mounting holes
+    for dx in (-PIR_HOLE_PITCH / 2, PIR_HOLE_PITCH / 2):
+        m -= _zcyl(px + dx, py, zb - 1, board_z + 1, PIR_BOSS_HOLE)   # through: M2 x 4 or x 5
+    # optional screws up into the floor, through the flange's ends (head pockets from below)
+    for dx in (-22.0, 22.0):
+        for dy in (-12.0, 12.0):
+            m -= _zcyl(px + dx, py + dy, zb - 1, 1, PIR_FLANGE_SCREW)
+            m -= _zcyl(px + dx, py + dy, zb - 1, fz, 5.0)
+    return m
+
+
 def panel_hung():
     g = GROOVE_CLR / 2
     x0, x1 = IN_X0 - GROOVE_DEPTH + 0.3, IN_X1 + GROOVE_DEPTH - 0.3
@@ -341,6 +391,12 @@ def pi_case_tray():
 
 
 @model
+def pir_mount():
+    """PIR holder taped under the floor. Prints as it hangs: cup bottom on the bed, flange up."""
+    return _part(_on_bed(pir_mount_hung()), "pir_mount")
+
+
+@model
 def front_panel():
     """Print orientation: outer face on the bed, tab up."""
     return _part(_on_bed(bd.Rot(-90, 0, 0) * panel_hung()), "front_panel")
@@ -368,7 +424,7 @@ def _shape(x):
 
 
 if __name__ == "__main__":
-    parts = {"body": body(), "pi_tray": pi_tray(), "pi_case_tray": pi_case_tray(), "front_panel": front_panel()}
+    parts = {"body": body(), "pi_tray": pi_tray(), "pi_case_tray": pi_case_tray(), "pir_mount": pir_mount(), "front_panel": front_panel()}
     whole = enclosure()
     if "--export" in sys.argv:
         out = Path(__file__).parent / "out"

@@ -92,12 +92,35 @@ section { display: grid; gap: 12px; }
     <h2>Assembly order</h2>
     <ol class="steps">
       <li><div><b>Hang the body.</b> Two wall screws, 104 mm apart and level, heads out about 3 mm. Put the big holes in the back plate over the heads and push the body down 10 mm so they lock in the slots.</div></li>
-      <li><div><b>PIR sensor.</b> In the strip behind the phone's spot, dome down through the round hole in the floor. Board onto the two posts with <span class="screw">2 × M2 × 5</span>.</div></li>
+      <li><div><b>PIR sensor.</b> It goes in a holder under the floor, dome down, wires up through the round hole. See <b>Motion sensor: the holder under the floor</b> below.</div></li>
       <li><div><b>Pi onto the tray</b> (on the bench). <span class="screw">4 × M2.5 × 6</span> into the tray's posts.</div></li>
       <li><div><b>Tray onto the shelf.</b> Plug the PIR wires into the Pi (OUT pin 11, VCC pin 2, GND pin 6), slide the tray in from the front with the Pi's USB end against the right wall, then <span class="screw">4 × M3 × 6</span> through the tray's corners into the shelf.</div></li>
       <li><div><b>Power.</b> Drop the cable from the ceiling through the slot in the top and plug it into the Pi.</div></li>
       <li><div><b>Phone.</b> Plug the USB cord into the Pi (its plug in the upper notch on the right) and into the phone, then slide the phone in under the shelf: screen up, top end left, its plug in the lower notch. The extra cord loops outside.</div></li>
       <li><div><b>Front panel.</b> Slide it straight down into the side-wall grooves, then <span class="screw">1 × M3 × 8</span> (thumb screw) through its tab into the top. To open: undo that one screw and lift the panel by the tab.</div></li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>Motion sensor: the holder under the floor</h2>
+    <p>The sensor's three pins stand straight up from the back of its board, and with the wire plugs on them they reach about 25 mm. That's more than the 14 mm between the floor and the shelf, so the sensor doesn't go on the floor posts after all. Print <span class="path">pir_mount.stl</span> instead: a small holder that sticks under the floor. The dome looks down out of it, and the plugs and wires go up through the original round hole.</p>
+    <figure>
+      <div class="plate"><img src="pir_mount.png" alt="The PIR holder as printed, and a side cut through the sensor: the holder stuck under the body's floor, the sensor board inside it with its parts facing up, the dome pointing down, and the plug and wires going up through the floor's round hole and the shelf's hole to the Pi."></div>
+      <figcaption>The holder as printed, and a side cut through the sensor with the wall on the left.</figcaption>
+    </figure>
+    <figure>
+      <div class="plate"><img src="pir_steps.png" alt="Six numbered panels: 1, the box's underside with the holder's spot marked against the wall, 12 mm in from the left, centred on the round hole; 2, the sensor screwed into the holder on a table, pins edge marked as the front; 3, wires plugged in and foam tape on the two wide ends of the rim; 4, from underneath, wires fed up through the round hole and the shelf hole; 5, the holder pushed up flat against the floor; 6, optional screws up through the holder's corners into the floor."></div>
+      <figcaption>Step by step. The holder is held by tape on its rim; the screws in panel 6 are extra.</figcaption>
+    </figure>
+    <p>This replaces step 2 above. You can do it after the body is on the wall.</p>
+    <ol class="steps">
+      <li><div><b>Set the sensor first.</b> Adjust the two orange knobs and the yellow jumper now; they face up into the holder and are hard to reach once it's stuck on.</div></li>
+      <li><div><b>Sensor into the holder</b> (on the bench). Parts side up, dome down through the square opening, so the board's two ends rest on the ledges. <span class="screw">2 × M2 × 4 or × 5</span> through the board's holes into the ledges.</div></li>
+      <li><div><b>Plug in the three wires</b> on the sensor's pins.</div></li>
+      <li><div><b>Tape.</b> Double-sided foam tape on the holder's flat top rim, mostly on its two wide ends.</div></li>
+      <li><div><b>Up into the floor.</b> From underneath, turn the holder so the pins face the front (the phone side). Feed the wires' free ends up through the round hole in the floor, then up through the hole in the shelf to the Pi. Push the holder up so the plugs go into the hole and the dome sits centred under it: its back edge touches the wall and its left edge is 12 mm in from the box's left side. Press firmly for 30 seconds.</div></li>
+      <li><div><b>Optional screws.</b> For a holder that can't fall off, drill four 2 mm pilot holes up into the floor through the holder's corner holes, then add <span class="screw">4 × #2 × 1/4" (or M2.5 × 6) self-tapping</span> screws. The tips poke about 1 mm into the strip behind the phone, which is fine.</div></li>
+      <li><div><b>Wires to the Pi:</b> OUT pin 11, VCC pin 2, GND pin 6. The two posts on top of the floor stay empty.</div></li>
     </ol>
   </section>
 
@@ -125,7 +148,9 @@ section { display: grid; gap: 12px; }
         <thead><tr><th>Screw</th><th>Qty</th><th>Where</th></tr></thead>
         <tbody>
           <tr><td class="n">Wall screw, head ≤ 9 mm (e.g. #8 pan head) + anchors</td><td class="n">2</td><td>Keyhole slots in the back plate</td></tr>
-          <tr><td class="n">M2 × 5</td><td class="n">2</td><td>PIR board to the floor posts</td></tr>
+          <tr><td class="n">M2 × 4 or × 5</td><td class="n">2</td><td>PIR board into the under-floor holder</td></tr>
+          <tr><td class="n">Double-sided foam tape</td><td class="n">a few strips</td><td>Holder to the underside of the floor</td></tr>
+          <tr><td class="n">Optional: #2 × 1/4" or M2.5 × 6 self-tapping</td><td class="n">4</td><td>Holder's corners up into the floor</td></tr>
           <tr><td class="n">M2.5 × 6</td><td class="n">4</td><td>Pi to the tray's posts</td></tr>
           <tr><td class="n">M3 × 6</td><td class="n">4</td><td>Tray to the shelf</td></tr>
           <tr><td class="n">M3 × 8 (thumb screw if you have one)</td><td class="n">1</td><td>Front panel tab to the top</td></tr>
@@ -151,6 +176,6 @@ section { display: grid; gap: 12px; }
         </tbody>
       </table>
     </div>
-    <p class="note">Plate 1: <span class="path">pi_tray.stl</span> (or <span class="path">pi_case_tray.stl</span>, no brim) + <span class="path">front_panel.stl</span> (answer No to "single object with multiple parts", then Arrange). Plate 2: <span class="path">body.stl</span> alone, standing on its back plate. Files are in <span class="path">enclosure/out/</span> on the <span class="path">claude/dazzling-hawking-tyhgh7</span> branch.</p>
+    <p class="note">Plate 1: <span class="path">pi_tray.stl</span> (or <span class="path">pi_case_tray.stl</span>, no brim) + <span class="path">front_panel.stl</span> (answer No to "single object with multiple parts", then Arrange). The holder, <span class="path">pir_mount.stl</span>, fits on the same plate; it prints as it comes in, cup bottom down, no brim. Plate 2: <span class="path">body.stl</span> alone, standing on its back plate. Files are in <span class="path">enclosure/out/</span> on the <span class="path">claude/dazzling-hawking-tyhgh7</span> branch.</p>
   </section>
 </main>
