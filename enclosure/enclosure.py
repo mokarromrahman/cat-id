@@ -305,7 +305,7 @@ def case_tray_hung():
 # The cup is held to the underside of the floor with double-sided foam tape on its flange, plus
 # four optional screws. The floor's two M2 posts on top go unused.
 PIR_BOARD = (32.2, 24.3)
-PIR_COMPONENT_ROOM = 7.0  # board back to the floor's underside (folded caps, pots, jumper)
+PIR_COMPONENT_ROOM = 15.0  # board back to the floor's underside (the electrolytic caps stand ~12 mm tall, jumper, pots)
 PIR_LEDGE_T = 3.0         # the board's two ends rest on this; M2 screws into it
 PIR_LENS_OPENING = (24.4, 24.8)  # x, y: the lens's square base (~24 mm) passes through
 PIR_CUP_CLR = 0.5
@@ -391,6 +391,46 @@ def bracket_hung(x0, x1, web_t):
     return b
 
 
+# --- Plug pocket: holds the extension cord's socket and the Pi's power adapter together ------
+# The Pi's supply is a CanaKit 5V 2.5A wall plug (prongs on its broad face, cable out of one
+# short end; body roughly 65 x 40 x 30 mm, estimated from photos). Plugged into the NOMA
+# extension cord's socket (~28 x 22 x 50 mm) it makes an L about 80 mm long. This is an open-top
+# pocket screwed to the drywall above the box (2 Hillman #8 anchors, pan heads sunk in
+# counterbores inside the pocket): the pair drops in with the adapter at the bottom, prongs up,
+# and the socket standing on it; the extension cord leaves out of the top, the adapter's
+# micro-USB cable through a slot in either end wall (open at the top so it slides in) and down
+# into the box. Sized loosely; gravity holds it, an optional zip tie through the two holes near
+# the top of the end walls straps it in. Modelled as printed: floor down.
+POCKET_IN = (76.0, 50.0, 60.0)   # inside: along the wall, out from the wall, height
+POCKET_WALL = 3.0
+POCKET_BACK = 5.0
+POCKET_FLOOR = 3.0
+POCKET_SLOT = 9.0                # cable slot width in the end walls
+POCKET_SLOT_BOTTOM = 14.0        # slot stops this far above the floor (the adapter's cable sits low)
+
+
+def plug_pocket_body():
+    iw, idp, ih = POCKET_IN
+    ow, od, oh = iw + 2 * POCKET_WALL, idp + POCKET_BACK + POCKET_WALL, ih + POCKET_FLOOR
+    # x along the wall, y out from the wall (back face at y = 0), z up
+    p = _box(-ow / 2, 0, 0, ow / 2, od, oh)
+    p = bd.fillet(p.edges().filter_by(bd.Axis.Z), 2.0)
+    p -= _box(-iw / 2, POCKET_BACK, POCKET_FLOOR, iw / 2, POCKET_BACK + idp, oh + 1)
+    ymid = POCKET_BACK + idp / 2
+    for sx in (-1, 1):
+        x0 = sx * iw / 2 - (POCKET_WALL + 1 if sx < 0 else -1) * 1.0
+        xa, xb = (-ow / 2 - 1, -iw / 2 + 1) if sx < 0 else (iw / 2 - 1, ow / 2 + 1)
+        p -= _box(xa, ymid - POCKET_SLOT / 2, POCKET_FLOOR + POCKET_SLOT_BOTTOM, xb, ymid + POCKET_SLOT / 2, oh + 1)
+        # zip-tie hole near the top, toward the front, through the end wall
+        p -= _box(xa, POCKET_BACK + idp - 9, oh - 9, xb, POCKET_BACK + idp - 4, oh - 6)
+    # two #8 pan-head screws through the back wall, heads sunk on the inside
+    for sx in (-1, 1):
+        hole = bd.Plane(origin=(sx * 22.0, 0, POCKET_FLOOR + 14.0), x_dir=(1, 0, 0), z_dir=(0, 1, 0))
+        p -= hole * bd.Pos(0, 0, POCKET_BACK / 2) * bd.Cylinder(4.6 / 2, POCKET_BACK + 2)
+        p -= hole * bd.Pos(0, 0, POCKET_BACK - 1.5) * bd.Cylinder(9.8 / 2, 3.0 + 0.01)
+    return p
+
+
 def panel_hung():
     g = GROOVE_CLR / 2
     x0, x1 = IN_X0 - GROOVE_DEPTH + 0.3, IN_X1 + GROOVE_DEPTH - 0.3
@@ -455,6 +495,12 @@ def wall_bracket_narrow():
 
 
 @model
+def plug_pocket():
+    """Wall pocket for the extension cord's socket + the Pi's CanaKit adapter. Print floor down."""
+    return _part(_on_bed(plug_pocket_body()), "plug_pocket")
+
+
+@model
 def front_panel():
     """Print orientation: outer face on the bed, tab up."""
     return _part(_on_bed(bd.Rot(-90, 0, 0) * panel_hung()), "front_panel")
@@ -482,7 +528,7 @@ def _shape(x):
 
 
 if __name__ == "__main__":
-    parts = {"body": body(), "pi_tray": pi_tray(), "pi_case_tray": pi_case_tray(), "pir_mount": pir_mount(), "wall_bracket": wall_bracket(), "wall_bracket_narrow": wall_bracket_narrow(), "front_panel": front_panel()}
+    parts = {"body": body(), "pi_tray": pi_tray(), "pi_case_tray": pi_case_tray(), "pir_mount": pir_mount(), "wall_bracket": wall_bracket(), "wall_bracket_narrow": wall_bracket_narrow(), "plug_pocket": plug_pocket(), "front_panel": front_panel()}
     whole = enclosure()
     if "--export" in sys.argv:
         out = Path(__file__).parent / "out"
