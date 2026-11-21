@@ -142,12 +142,33 @@ section { display: grid; gap: 12px; }
   </section>
 
   <section>
+    <h2>Wall brackets under the box</h2>
+    <p>Three brackets under the box take its front-heavy weight off the two keyhole screws. Each is a U-channel: two triangular side walls, a deck under the box's floor, a back plate on the wall, and a lip that hooks the floor's front edge so the box can't tip forward or slide off. They reach 120 mm down the wall, just outside the camera's view. Print <span class="path">wall_bracket.stl</span> twice and <span class="path">wall_bracket_narrow.stl</span> once.</p>
+    <figure>
+      <div class="plate"><img src="brackets.png" alt="A bracket in 3D; a side cut of the box resting on a bracket screwed to the drywall with two anchors, the lip hooking the floor's front edge; and a front view of the box with three brackets under it, the narrow one at the left edge beside the motion sensor holder."></div>
+      <figcaption>The brackets, installed. The screwdriver reaches each wall screw between the bracket's two side walls.</figcaption>
+    </figure>
+    <figure>
+      <div class="plate"><img src="wall_holes.png" alt="Wall layout of the 8 holes: keyhole screws K1 and K2 on a level line 104 mm apart; bracket screws L1, L2, M1, M2, R1, R2, the top ones 55 mm below the level line and the bottom ones 94 mm below those; horizontally from K1, the left bracket 36 mm left, the middle 55 mm right, the right 125 mm right."></div>
+      <figcaption>Where the 8 holes go, measured from K1, the left keyhole screw. A full-size paper template, <span class="path">wall_template.pdf</span>, is in the repo next to this guide.</figcaption>
+    </figure>
+    <ol class="steps">
+      <li><div><b>Hang the box first</b> on its two keyhole screws, as normal.</div></li>
+      <li><div><b>Hold each bracket up tight</b> under the box, flat on the wall, with its lip in front of the floor's front edge. Narrow one: its left edge 9 mm past the box's left side. Middle: its left edge 80 mm in from the box's left side. Right: its right edge 4 mm in from the box's right side.</div></li>
+      <li><div><b>Mark</b> both holes with a pencil, then take the bracket away.</div></li>
+      <li><div><b>Anchors.</b> Screw a self-drilling drywall anchor into each mark with a #2 Phillips screwdriver until it sits flush. No drilling needed.</div></li>
+      <li><div><b>Screw the bracket on</b> with the anchors' <span class="screw">#8 flat-head screws</span>, snug but not hard, so the anchor doesn't spin.</div></li>
+    </ol>
+  </section>
+
+  <section>
     <h2>Hardware</h2>
     <div class="tablewrap">
       <table>
         <thead><tr><th>Screw</th><th>Qty</th><th>Where</th></tr></thead>
         <tbody>
-          <tr><td class="n">Wall screw, head ≤ 9 mm (e.g. #8 pan head) + anchors</td><td class="n">2</td><td>Keyhole slots in the back plate</td></tr>
+          <tr><td class="n">Self-drilling drywall anchors, #8, 75 lb (e.g. E-Z Ancor Twist-N-Lock), with #8 flat-head screws</td><td class="n">8</td><td>6 for the brackets (their screws), 2 for the keyholes</td></tr>
+          <tr><td class="n">#8 × 1-1/4" pan-head screws</td><td class="n">2</td><td>Keyhole slots, into 2 of the anchors, heads left out ~3 mm</td></tr>
           <tr><td class="n">M2 × 4 or × 5</td><td class="n">2</td><td>PIR board into the under-floor holder</td></tr>
           <tr><td class="n">Double-sided foam tape</td><td class="n">a few strips</td><td>Holder to the underside of the floor</td></tr>
           <tr><td class="n">Optional: #2 × 1/4" or M2.5 × 6 self-tapping</td><td class="n">4</td><td>Holder's corners up into the floor</td></tr>
@@ -176,6 +197,6 @@ section { display: grid; gap: 12px; }
         </tbody>
       </table>
     </div>
-    <p class="note">Plate 1: <span class="path">pi_tray.stl</span> (or <span class="path">pi_case_tray.stl</span>, no brim) + <span class="path">front_panel.stl</span> (answer No to "single object with multiple parts", then Arrange). The holder, <span class="path">pir_mount.stl</span>, fits on the same plate; it prints as it comes in, cup bottom down, no brim. Plate 2: <span class="path">body.stl</span> alone, standing on its back plate. Files are in <span class="path">enclosure/out/</span> on the <span class="path">claude/dazzling-hawking-tyhgh7</span> branch.</p>
+    <p class="note">Plate 1: <span class="path">pi_tray.stl</span> (or <span class="path">pi_case_tray.stl</span>, no brim) + <span class="path">front_panel.stl</span> (answer No to "single object with multiple parts", then Arrange). The holder, <span class="path">pir_mount.stl</span>, fits on the same plate; it prints as it comes in, cup bottom down, no brim. Brackets: <span class="path">wall_bracket.stl</span> ×2 and <span class="path">wall_bracket_narrow.stl</span> ×1 on one plate, standing on their back plates as imported, with 4 wall loops, 40 % gyroid infill and a 5 mm brim. Plate 2: <span class="path">body.stl</span> alone, standing on its back plate. Files are in <span class="path">enclosure/out/</span> on the <span class="path">claude/dazzling-hawking-tyhgh7</span> branch.</p>
   </section>
 </main>

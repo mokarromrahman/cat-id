@@ -345,6 +345,52 @@ def pir_mount_hung():
     return m
 
 
+# --- Wall brackets under the box (extra support; the box is front-heavy) -----------------
+# Three shelf brackets screwed to the wall under the box, each a U-channel: two side webs (the
+# triangular braces), a deck under the box's floor, a back plate on the wall, and a lip that
+# hooks the floor's front edge so the box can't tip forward or slide off. The screwdriver
+# reaches the wall screws between the two webs. The left one is narrow and sits half past the
+# box's left side (the camera window starts 7.6 mm in); the other two sit right of the camera
+# window. 120 mm down the wall: the legs stay just outside the main camera's view (~40 deg off
+# centre) while the top screws see ~30 % less pull than at 95 mm. Install after the box hangs:
+# push each bracket up tight under it, mark, then drive the anchors and screws.
+# Screws: #8 flat head (E-Z Ancor Twist-N-Lock 75 lb anchors come with them).
+BRACKET_LEG = 120.0
+BRACKET_DECK_T = 5.0
+BRACKET_PLATE_T = 6.0
+BRACKET_WEB_DEPTH = 8.0     # webs reach this far below the box's floor along the deck
+BRACKET_BRACE_Y = 98.0      # where the brace meets the deck
+BRACKET_LIP = 4.0
+BRACKET_LIP_GAP = 0.4
+BRACKET_SCREW = 4.6         # #8 clearance
+BRACKET_CSK = 8.8           # #8 flat head, 82 degrees
+BRACKETS = {                # name: (x0, x1, web thickness)
+    "left": (-9.0, 7.0, 3.0),
+    "middle": (80.0, 100.0, 4.5),
+    "right": (150.0, 170.0, 4.5),
+}
+
+
+def bracket_hung(x0, x1, web_t):
+    """Hung coordinates: z = 0 is the underside of the box's floor, y = 0 the wall."""
+    ye = OUT_Y + BRACKET_LIP_GAP
+    b = _box(x0, 0, -BRACKET_DECK_T, x1, ye, 0)                       # deck
+    b += _box(x0, 0, -BRACKET_LEG, x1, BRACKET_PLATE_T, 0)            # back plate
+    web = bd.Polygon((0, 0), (ye, 0), (ye, -BRACKET_WEB_DEPTH), (BRACKET_BRACE_Y, -BRACKET_WEB_DEPTH),
+                     (BRACKET_PLATE_T, -BRACKET_LEG), (0, -BRACKET_LEG), align=None)
+    for wx in (x0, x1 - web_t):
+        b += bd.Pos(wx, 0, 0) * bd.extrude(bd.Plane.YZ * web, web_t, dir=(1, 0, 0))
+    b += _box(x0, ye, -BRACKET_DECK_T, x1, ye + BRACKET_LIP, FLOOR)  # lip over the floor's front edge
+    cx = (x0 + x1) / 2
+    for z in (-14.0, -(BRACKET_LEG - 12.0)):
+        hole = bd.Plane(origin=(cx, 0, z), x_dir=(1, 0, 0), z_dir=(0, 1, 0))
+        b -= hole * bd.Pos(0, 0, BRACKET_PLATE_T / 2) * bd.Cylinder(BRACKET_SCREW / 2, BRACKET_PLATE_T + 2)
+        csk_h = (BRACKET_CSK - BRACKET_SCREW) / 2 / math.tan(math.radians(41))
+        b -= hole * bd.Pos(0, 0, BRACKET_PLATE_T - csk_h) * bd.Cone(BRACKET_SCREW / 2, BRACKET_CSK / 2, csk_h,
+                                                                     align=(bd.Align.CENTER, bd.Align.CENTER, bd.Align.MIN))
+    return b
+
+
 def panel_hung():
     g = GROOVE_CLR / 2
     x0, x1 = IN_X0 - GROOVE_DEPTH + 0.3, IN_X1 + GROOVE_DEPTH - 0.3
@@ -397,6 +443,18 @@ def pir_mount():
 
 
 @model
+def wall_bracket():
+    """Print 2 (middle and right). Back plate (wall side) on the bed."""
+    return _part(_on_bed(bd.Rot(90, 0, 0) * bracket_hung(*BRACKETS["middle"])), "wall_bracket")
+
+
+@model
+def wall_bracket_narrow():
+    """Print 1 (left, under the camera side). Back plate on the bed."""
+    return _part(_on_bed(bd.Rot(90, 0, 0) * bracket_hung(*BRACKETS["left"])), "wall_bracket_narrow")
+
+
+@model
 def front_panel():
     """Print orientation: outer face on the bed, tab up."""
     return _part(_on_bed(bd.Rot(-90, 0, 0) * panel_hung()), "front_panel")
@@ -424,7 +482,7 @@ def _shape(x):
 
 
 if __name__ == "__main__":
-    parts = {"body": body(), "pi_tray": pi_tray(), "pi_case_tray": pi_case_tray(), "pir_mount": pir_mount(), "front_panel": front_panel()}
+    parts = {"body": body(), "pi_tray": pi_tray(), "pi_case_tray": pi_case_tray(), "pir_mount": pir_mount(), "wall_bracket": wall_bracket(), "wall_bracket_narrow": wall_bracket_narrow(), "front_panel": front_panel()}
     whole = enclosure()
     if "--export" in sys.argv:
         out = Path(__file__).parent / "out"
