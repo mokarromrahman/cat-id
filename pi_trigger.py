@@ -1,10 +1,16 @@
 """Runs on the Raspberry Pi 3.
 
-IR/PIR sensor trips -> grab a still from the phone (IP Webcam app) ->
-POST it to the cat-id server.
+IR/PIR sensor trips -> phone_control.py takes a photo on the phone over adb (USB) and
+copies it to the Pi -> POST it to the cat-id server.
+
+The phone needs no Wi-Fi: adb and the photo copy go over the USB cable, and the Pi does
+the upload over its own network connection.
 
 Wiring: sensor OUT -> GPIO17 (pin 11), VCC -> 5V (pin 2), GND -> pin 6.
-Install: sudo apt install python3-gpiozero python3-requests
+Install: sudo apt install adb; pip install -r pi_requirements.txt
+Before running: adb start-server, then `adb devices` must list the phone as "device"
+(accept the "Allow USB debugging?" prompt on the phone the first time).
+Config in .env: SERVER, API_KEY, optional CAT_ID_USER (default pi), CAT_ID_LOCATION.
 """
 import os
 import time

@@ -46,9 +46,19 @@ on the router, and the tailnet sees only the cat-id container.
    server in the app as `https://cat-id.<tailnet>.ts.net`.
 
 ## 4. Capture (Raspberry Pi)
-Install an "IP Webcam" style app on the S20 FE (serves a still at
-`http://PHONE_IP:8080/photoaf.jpg`), give the phone a fixed IP, and run
-`pi_trigger.py` with PHONE_SNAPSHOT, SERVER and API_KEY set.
+The Pi takes photos with the S20 FE over adb on a USB cable (`phone_control.py`) and posts
+them to `/litterbox`. The phone needs no Wi-Fi; only the Pi has to be on the network.
+
+1. Phone: Settings > About phone > Software information > tap "Build number" 7 times, then
+   Settings > Developer options > turn on "USB debugging". Plug it into the Pi.
+2. Pi: `sudo apt install adb`, then `pip install -r pi_requirements.txt`.
+3. `adb start-server`, then `adb devices`: tap "Allow" (and "Always allow from this
+   computer") on the phone; the phone must show as `device`, not `unauthorized`.
+4. `.env` next to `pi_trigger.py`: `SERVER`, `API_KEY`, optional `CAT_ID_USER` (default
+   `pi`) and `CAT_ID_LOCATION` (default: the server's `PI_LOCATION`, `basement`).
+5. `./pi_start.sh`: starts the adb server, waits for the phone, turns on the phone's
+   "Protect battery" (stops charging at 85%), activates `~/venv/cat-id` (or `CAT_ID_VENV`)
+   and runs `pi_trigger.py`. Run it again after every reboot (the adb server doesn't survive one).
 
 ## 5. Improve over time
 Every capture is saved to `inbox/` with the guess in its name. Label the misses at
