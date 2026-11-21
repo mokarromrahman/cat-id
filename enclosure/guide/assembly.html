@@ -102,6 +102,23 @@ section { display: grid; gap: 12px; }
   </section>
 
   <section>
+    <h2>If the Pi stays in its case bottom</h2>
+    <p>For a Pi that's in the bottom half of its clear snap-together case (91.5 × 61 mm), print <span class="path">pi_case_tray.stl</span> instead of <span class="path">pi_tray.stl</span>. The case sits in a shallow pocket, held with double-sided foam tape, so nothing presses on the board. It uses the same four shelf holes, so the body and front panel don't change. The height doesn't need to be exact: one of the two stacked USB ports always lines up with the notch.</p>
+    <figure>
+      <div class="plate"><img src="case_tray.png" alt="The case tray: a flat plate with low walls on three sides and an open end, and a top view on the shelf showing the clear case outline, the USB end against the right wall, four screw positions at the corners and a gap in the back wall for the power plug."></div>
+      <figcaption>The case tray as printed, and from above on the shelf. The screw heads sit flush under the case.</figcaption>
+    </figure>
+    <p>This replaces steps 3 and 4 above:</p>
+    <ol class="steps">
+      <li><div><b>Tray onto the shelf, empty.</b> Slide it in from the front, open end of the pocket against the right wall.</div></li>
+      <li><div><b>Screw it down first.</b> <span class="screw">4 × M3 × 6 button head</span> into the shelf. Do this before the Pi goes in: the heads end up under the case.</div></li>
+      <li><div><b>Tape.</b> Two strips of 1–2 mm thick double-sided foam mounting tape under the case, between its little bumps.</div></li>
+      <li><div><b>Wires, then the Pi.</b> Plug the PIR wires into the GPIO pins (OUT pin 11, VCC pin 2, GND pin 6), set the case in the pocket with the USB jacks against the right wall, and press it down.</div></li>
+      <li><div><b>USB cord.</b> Plug it into whichever USB port lines up with the notch in the right wall.</div></li>
+    </ol>
+  </section>
+
+  <section>
     <h2>Hardware</h2>
     <div class="tablewrap">
       <table>
@@ -112,6 +129,8 @@ section { display: grid; gap: 12px; }
           <tr><td class="n">M2.5 × 6</td><td class="n">4</td><td>Pi to the tray's posts</td></tr>
           <tr><td class="n">M3 × 6</td><td class="n">4</td><td>Tray to the shelf</td></tr>
           <tr><td class="n">M3 × 8 (thumb screw if you have one)</td><td class="n">1</td><td>Front panel tab to the top</td></tr>
+          <tr><td class="n">Case tray instead: M3 × 6 button head</td><td class="n">4</td><td>Case tray to the shelf (in place of the 4 × M3 × 6 above; no M2.5 screws needed)</td></tr>
+          <tr><td class="n">Case tray: 1–2 mm double-sided foam tape</td><td class="n">2 strips</td><td>Under the Pi's case</td></tr>
         </tbody>
       </table>
     </div>
@@ -132,6 +151,6 @@ section { display: grid; gap: 12px; }
         </tbody>
       </table>
     </div>
-    <p class="note">Plate 1: <span class="path">pi_tray.stl</span> + <span class="path">front_panel.stl</span> (answer No to "single object with multiple parts", then Arrange). Plate 2: <span class="path">body.stl</span> alone, standing on its back plate. Files are in <span class="path">enclosure/out/</span> on the <span class="path">claude/dazzling-hawking-tyhgh7</span> branch.</p>
+    <p class="note">Plate 1: <span class="path">pi_tray.stl</span> (or <span class="path">pi_case_tray.stl</span>, no brim) + <span class="path">front_panel.stl</span> (answer No to "single object with multiple parts", then Arrange). Plate 2: <span class="path">body.stl</span> alone, standing on its back plate. Files are in <span class="path">enclosure/out/</span> on the <span class="path">claude/dazzling-hawking-tyhgh7</span> branch.</p>
   </section>
 </main>

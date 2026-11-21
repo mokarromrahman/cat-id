@@ -248,6 +248,53 @@ def tray_hung():
     return t
 
 
+# --- Alternative tray: the Pi stays in the bottom half of its stock snap-together case -----
+# (Circuit Specialists RPI-CASE, clear; measured 91.5 x 61.0 mm, walls up to 18 mm, 1.2 mm
+# bumps underneath; the corner posts are solid, so no screws through it.) The case drops into a
+# shallow pocket and is held with double-sided foam tape; the tray screws to the same four
+# shelf holes as pi_tray (M3 x 6 button heads, sunk flush under the case).
+# Height is forgiving: the right wall's USB notch spans 8.5-26.6 mm above the shelf, so with the
+# board top anywhere from ~1 to ~10 mm above the bottom of the case a plug in one of the two
+# stacked USB ports clears it (lower port from ~5 mm up, upper port up to ~6.5 mm), and the
+# GPIO jumpers stay under the top plate.
+PI_CASE_L, PI_CASE_W, PI_CASE_H = 91.5, 61.0, 18.0
+CASE_TRAY_T = 3.5        # floor; M3 button heads (1.65 mm) sink 2.2 mm into it
+CASE_CLR = 0.5           # per side in the pocket
+CASE_WALL_T, CASE_WALL_H = 2.0, 4.0
+CASE_END_GAP = 1.5       # case's USB end to the right wall (the jacks poke into the notch)
+CASE_X1 = IN_X1 - CASE_END_GAP
+CASE_X0 = CASE_X1 - PI_CASE_L
+CASE_YC = BOARD_Y0 + PI_W / 2
+CASE_TRAY_X0 = CASE_X0 - CASE_CLR - CASE_WALL_T - 3.0
+
+
+def case_tray_hung():
+    z0, z1 = SHELF_Z1, SHELF_Z1 + CASE_TRAY_T
+    t = _box(CASE_TRAY_X0, TRAY_Y0 - 2.0, z0, TRAY_X1, TRAY_Y1 + 2.0, z1)
+    t = bd.fillet(t.edges().filter_by(bd.Axis.Z), FILLET)
+    for x, y in TRAY_SCREWS:
+        t -= _zcyl(x, y, z0 - 1, z1 + 1, TRAY_SCREW)
+        t -= _zcyl(x, y, z1 - 2.2, z1 + 1, 6.4)   # flush head pocket (button head)
+        if x > CASE_X1 - 10:  # too near the right edge for a wall: open the pocket to it
+            t -= _box(x, y - 3.2, z1 - 2.2, TRAY_X1 + 1, y + 3.2, z1 + 1)
+    py0 = CASE_YC - PI_CASE_W / 2 - CASE_CLR
+    py1 = CASE_YC + PI_CASE_W / 2 + CASE_CLR
+    px0 = CASE_X0 - CASE_CLR
+    wz = z1 + CASE_WALL_H
+    # long-side walls, clear of the screw heads; a gap at the back for the micro-USB power plug
+    pwr_x = CASE_X0 + 3.0 + PI_POWER_X
+    for xa, xb in ((pwr_x + 9.0, TRAY_SCREWS[2][0] - 4.5),):
+        t += _box(xa, py0 - CASE_WALL_T, z1 - 0.01, xb, py0, wz)
+    t += _box(TRAY_SCREWS[0][0] + 4.5, py1, z1 - 0.01, TRAY_SCREWS[2][0] - 4.5, py1 + CASE_WALL_T, wz)
+    # SD-card end wall, with a gap for the card
+    end = _box(px0 - CASE_WALL_T, py0 + 4, z1 - 0.01, px0, py1 - 4, wz)
+    end -= _box(px0 - CASE_WALL_T - 1, CASE_YC - 9, z1 - 1, px0 + 1, CASE_YC + 9, wz + 1)
+    t += end
+    # window under the middle: less plastic, air reaches the case's vents
+    t -= _box(CASE_X0 + 18, CASE_YC - 16, z0 - 1, CASE_X1 - 22, CASE_YC + 16, z1 + 1)
+    return t
+
+
 def panel_hung():
     g = GROOVE_CLR / 2
     x0, x1 = IN_X0 - GROOVE_DEPTH + 0.3, IN_X1 + GROOVE_DEPTH - 0.3
@@ -288,6 +335,12 @@ def pi_tray():
 
 
 @model
+def pi_case_tray():
+    """Use instead of pi_tray when the Pi stays in its stock case bottom. Print flat."""
+    return _part(_on_bed(case_tray_hung()), "pi_case_tray")
+
+
+@model
 def front_panel():
     """Print orientation: outer face on the bed, tab up."""
     return _part(_on_bed(bd.Rot(-90, 0, 0) * panel_hung()), "front_panel")
@@ -315,7 +368,7 @@ def _shape(x):
 
 
 if __name__ == "__main__":
-    parts = {"body": body(), "pi_tray": pi_tray(), "front_panel": front_panel()}
+    parts = {"body": body(), "pi_tray": pi_tray(), "pi_case_tray": pi_case_tray(), "front_panel": front_panel()}
     whole = enclosure()
     if "--export" in sys.argv:
         out = Path(__file__).parent / "out"
