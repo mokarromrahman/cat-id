@@ -1,0 +1,218 @@
+<title>Litterbox Rig Assembly</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@500;600&display=swap">
+<style>
+/* Layout: a single workshop-sheet column; diagrams sit on white "drawing plates", steps and hardware read like a build sheet. */
+:root {
+  --bg: #f6f7f5;
+  --surface: #ffffff;
+  --fg: #1d2421;
+  --muted: #5d6a64;
+  --line: #d7ddd9;
+  --accent: #1f5fbf;      /* the blue of the step numbers in the drawings */
+  --screw: #c62828;       /* the red of the screws in the drawings */
+  --plate: #ffffff;       /* drawings are white in both themes */
+  --chip: #e8eef8;
+  --font-display: "Space Grotesk", "Helvetica Neue", Arial, sans-serif;
+  --font-body: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141917; --surface: #1c2320; --fg: #e4eae7; --muted: #9aa8a1; --line: #2f3935;
+    --accent: #7fb0ff; --screw: #ff7b7b; --plate: #ffffff; --chip: #233247; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #141917; --surface: #1c2320; --fg: #e4eae7; --muted: #9aa8a1; --line: #2f3935;
+  --accent: #7fb0ff; --screw: #ff7b7b; --plate: #ffffff; --chip: #233247; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 16px; line-height: 1.55;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 32px 64px;
+}
+main { max-width: 900px; margin: 0 auto; display: grid; gap: 40px; }
+header { display: grid; gap: 8px; }
+.eyebrow { font-family: var(--font-mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+h1 { font-family: var(--font-display); font-weight: 600; font-size: clamp(28px, 5vw, 40px); line-height: 1.1; margin: 0; text-wrap: balance; }
+h2 { font-family: var(--font-display); font-weight: 600; font-size: 22px; margin: 0 0 12px; text-wrap: balance; }
+p { margin: 0; max-width: 65ch; }
+.lede { color: var(--muted); }
+.key { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 14px; color: var(--muted); }
+.key span { display: inline-flex; align-items: center; gap: 8px; }
+.dot { width: 14px; height: 14px; border-radius: 50%; background: var(--accent); display: inline-block; }
+.bar { width: 18px; height: 6px; background: var(--screw); display: inline-block; }
+figure { margin: 0; display: grid; gap: 10px; }
+.plate { background: var(--plate); border: 1px solid var(--line); border-radius: 6px; overflow-x: auto; }
+.plate img { display: block; width: 100%; min-width: 640px; height: auto; }
+figcaption { font-size: 14px; color: var(--muted); max-width: 65ch; }
+ol.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; counter-reset: s; }
+ol.steps li { counter-increment: s; display: grid; grid-template-columns: 32px 1fr; gap: 12px; align-items: start; }
+ol.steps li::before {
+  content: counter(s); width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: var(--bg);
+  font-family: var(--font-display); font-weight: 600; font-size: 14px; display: grid; place-items: center; margin-top: 1px;
+}
+ol.steps li > div { min-width: 0; }
+ol.steps b { font-weight: 600; }
+.screw { font-family: var(--font-mono); font-size: 14px; color: var(--screw); white-space: nowrap; }
+.tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 15px; }
+th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-family: var(--font-mono); font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 500; }
+tr:last-child td { border-bottom: 0; }
+td.n { font-family: var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.path { font-family: var(--font-mono); font-size: 14px; background: var(--chip); padding: 1px 6px; border-radius: 4px; }
+.note { font-size: 14px; color: var(--muted); }
+section { display: grid; gap: 12px; }
+</style>
+
+<main>
+  <header>
+    <div class="eyebrow">cat-id · enclosure · Pi 3 + Galaxy S20 FE + HC-SR501</div>
+    <h1>Litterbox Rig Assembly</h1>
+    <p class="lede">How the three printed parts (body, Pi tray, front panel) go together, and where every screw goes. The enclosure hangs about 5 ft up the wall, right above the litterbox; the camera and the motion sensor look straight down.</p>
+    <div class="key"><span><i class="dot"></i>Blue numbers: assembly order</span><span><i class="bar"></i>Red: screws</span></div>
+  </header>
+
+  <figure>
+    <div class="plate"><img src="assembly_side.png" alt="Side cut-through of the enclosure with the parts pulled apart: wall on the left, body with floor, shelf and top; PIR on the floor; Pi on its tray sliding in onto the shelf; phone sliding in under the shelf; front panel dropping into the grooves; numbered steps 1 to 7 and red screws."></div>
+    <figcaption>Side cut-through, wall on the left, parts pulled apart. The tray and the phone both slide in from the front; the panel drops in from above.</figcaption>
+  </figure>
+
+  <figure>
+    <div class="plate"><img src="assembly_front.png" alt="Front view cut through the middle of the phone: panel lifted above, phone in the lower bay, Pi on its tray on the shelf, keyholes behind, tray screws, power cable down through the top slot, and the USB cord looping outside the wall on your left between the two plugs."></div>
+    <figcaption>Front view, cut through the middle of the phone, panel lifted off. Drawn as you see it facing the wall. Both USB plugs poke out of the side wall on your left and the cord loops between them outside.</figcaption>
+  </figure>
+
+  <section>
+    <h2>Assembly order</h2>
+    <ol class="steps">
+      <li><div><b>Hang the body.</b> Two wall screws, 104 mm apart and level, heads out about 3 mm. Put the big holes in the back plate over the heads and push the body down 10 mm so they lock in the slots.</div></li>
+      <li><div><b>PIR sensor.</b> It goes in a holder under the floor, dome down, wires up through the round hole. See <b>Motion sensor: the holder under the floor</b> below.</div></li>
+      <li><div><b>Pi onto the tray</b> (on the bench). <span class="screw">4 × M2.5 × 6</span> into the tray's posts.</div></li>
+      <li><div><b>Tray onto the shelf.</b> Plug the PIR wires into the Pi (OUT pin 11, VCC pin 2, GND pin 6), slide the tray in from the front with the Pi's USB end against the side wall on your left (the one with the notches), then <span class="screw">4 × M3 × 6</span> through the tray's corners into the shelf.</div></li>
+      <li><div><b>Power.</b> Drop the cable from the ceiling through the slot in the top and plug it into the Pi.</div></li>
+      <li><div><b>Phone.</b> Plug the USB cord into the Pi (its plug in the upper notch, on your left) and into the phone, then slide the phone in under the shelf: screen up, top end toward your right (the camera side), its plug in the lower notch on your left. The extra cord loops outside.</div></li>
+      <li><div><b>Front panel.</b> Slide it straight down into the side-wall grooves, then <span class="screw">1 × M3 × 8</span> (thumb screw) through its tab into the top. To open: undo that one screw and lift the panel by the tab.</div></li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>Motion sensor: the holder under the floor</h2>
+    <p>The sensor's three pins stand straight up from the back of its board, and with the wire plugs on them they reach about 25 mm. That's more than the 14 mm between the floor and the shelf, so the sensor doesn't go on the floor posts after all. Print <span class="path">pir_mount.stl</span> instead: a small holder that sticks under the floor. The dome looks down out of it, and the plugs and wires go up through the original round hole.</p>
+    <figure>
+      <div class="plate"><img src="pir_mount.png" alt="The PIR holder as printed, and a side cut through the sensor: the holder stuck under the body's floor, the sensor board inside it with its parts facing up, the dome pointing down, and the plug and wires going up through the floor's round hole and the shelf's hole to the Pi."></div>
+      <figcaption>The holder as printed, and a side cut through the sensor with the wall on the left.</figcaption>
+    </figure>
+    <figure>
+      <div class="plate"><img src="pir_steps.png" alt="Six numbered panels: 1, the box's underside with the holder's spot marked against the wall, 12 mm in from the right (camera) side, centred on the round hole; 2, the sensor screwed into the holder on a table, pins edge marked as the front; 3, wires plugged in and foam tape on the two wide ends of the rim; 4, from underneath, wires fed up through the round hole and the shelf hole; 5, the holder pushed up flat against the floor; 6, optional screws up through the holder's corners into the floor."></div>
+      <figcaption>Step by step. The holder is held by tape on its rim; the screws in panel 6 are extra.</figcaption>
+    </figure>
+    <p>This replaces step 2 above. You can do it after the body is on the wall.</p>
+    <ol class="steps">
+      <li><div><b>Set the sensor first.</b> Adjust the two orange knobs and the yellow jumper now; they face up into the holder and are hard to reach once it's stuck on.</div></li>
+      <li><div><b>Sensor into the holder</b> (on the bench). Parts side up, dome down through the square opening, so the board's two ends rest on the ledges. <span class="screw">2 × M2 × 4 or × 5</span> through the board's holes into the ledges.</div></li>
+      <li><div><b>Plug in the three wires</b> on the sensor's pins.</div></li>
+      <li><div><b>Tape.</b> Double-sided foam tape on the holder's flat top rim, mostly on its two wide ends.</div></li>
+      <li><div><b>Up into the floor.</b> From underneath, turn the holder so the pins face the front (the phone side). Feed the wires' free ends up through the round hole in the floor, then up through the hole in the shelf to the Pi. Push the holder up so the plugs go into the hole and the dome sits centred under it: its back edge touches the wall and its right edge is 12 mm in from the box's right side (the camera side, as you face the wall). Press firmly for 30 seconds.</div></li>
+      <li><div><b>Optional screws.</b> For a holder that can't fall off, drill four 2 mm pilot holes up into the floor through the holder's corner holes, then add <span class="screw">4 × #2 × 1/4" (or M2.5 × 6) self-tapping</span> screws. The tips poke about 1 mm into the strip behind the phone, which is fine.</div></li>
+      <li><div><b>Wires to the Pi:</b> OUT pin 11, VCC pin 2, GND pin 6. The two posts on top of the floor stay empty.</div></li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>If the Pi stays in its case bottom</h2>
+    <p>For a Pi that's in the bottom half of its clear snap-together case (91.5 × 61 mm), print <span class="path">pi_case_tray.stl</span> instead of <span class="path">pi_tray.stl</span>. The case sits in a shallow pocket, held with double-sided foam tape, so nothing presses on the board. It uses the same four shelf holes, so the body and front panel don't change. The height doesn't need to be exact: one of the two stacked USB ports always lines up with the notch.</p>
+    <figure>
+      <div class="plate"><img src="case_tray.png" alt="The case tray: a flat plate with low walls on three sides and an open end, and a top view on the shelf showing the clear case outline, the USB end against the notched wall on your left, four screw positions at the corners and a gap in the back wall for the power plug."></div>
+      <figcaption>The case tray as printed, and from above on the shelf. The screw heads sit flush under the case.</figcaption>
+    </figure>
+    <p>This replaces steps 3 and 4 above:</p>
+    <ol class="steps">
+      <li><div><b>Tray onto the shelf, empty.</b> Slide it in from the front, open end of the pocket against the notched wall on your left.</div></li>
+      <li><div><b>Screw it down first.</b> <span class="screw">4 × M3 × 6 button head</span> into the shelf. Do this before the Pi goes in: the heads end up under the case.</div></li>
+      <li><div><b>Tape.</b> Two strips of 1–2 mm thick double-sided foam mounting tape under the case, between its little bumps.</div></li>
+      <li><div><b>Wires, then the Pi.</b> Plug the PIR wires into the GPIO pins (OUT pin 11, VCC pin 2, GND pin 6), set the case in the pocket with the USB jacks against the notched wall on your left, and press it down.</div></li>
+      <li><div><b>USB cord.</b> Plug it into whichever USB port lines up with the notch in the wall on your left.</div></li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>Wall brackets under the box</h2>
+    <p>Three brackets under the box take its front-heavy weight off the two keyhole screws. Each is a U-channel: two triangular side walls, a deck under the box's floor, a back plate on the wall, and a lip that hooks the floor's front edge so the box can't tip forward or slide off. They reach 120 mm down the wall, just outside the camera's view. Print <span class="path">wall_bracket.stl</span> twice and <span class="path">wall_bracket_narrow.stl</span> once.</p>
+    <figure>
+      <div class="plate"><img src="brackets.png" alt="A bracket in 3D; a side cut of the box resting on a bracket screwed to the drywall with two anchors, the lip hooking the floor's front edge; and a front view of the box with three brackets under it, the narrow one at the right edge (camera side) beside the motion sensor holder."></div>
+      <figcaption>The brackets, installed. The screwdriver reaches each wall screw between the bracket's two side walls.</figcaption>
+    </figure>
+    <figure>
+      <div class="plate"><img src="wall_holes.png" alt="Wall layout of the 8 holes: keyhole screws K1 and K2 on a level line 104 mm apart; bracket screws L1, L2, M1, M2, R1, R2, the top ones 55 mm below the level line and the bottom ones 94 mm below those; horizontally from K1, the left bracket 21 mm left, the middle 49 mm right, the narrow right one 140 mm right."></div>
+      <figcaption>Where the 8 holes go, measured from K1, the left keyhole screw. A full-size paper template, <span class="path">wall_template.pdf</span>, is in the repo next to this guide.</figcaption>
+    </figure>
+    <ol class="steps">
+      <li><div><b>Hang the box first</b> on its two keyhole screws, as normal.</div></li>
+      <li><div><b>Hold each bracket up tight</b> under the box, flat on the wall, with its lip in front of the floor's front edge. Left one: its left edge 4 mm in from the box's left side. Middle: its left edge 74 mm in from the box's left side. Narrow one (camera side, your right): its right edge 9 mm past the box's right side. Or just use the wall template.</div></li>
+      <li><div><b>Mark</b> both holes with a pencil, then take the bracket away.</div></li>
+      <li><div><b>Anchors.</b> Screw a self-drilling drywall anchor into each mark with a #2 Phillips screwdriver until it sits flush. No drilling needed.</div></li>
+      <li><div><b>Screw the bracket on</b> with the anchors' <span class="screw">#8 flat-head screws</span>, snug but not hard, so the anchor doesn't spin.</div></li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>Plug box (Pi power adapter + extension cord socket)</h2>
+    <p>A closed box on the wall above the camera box for the black Pi adapter plugged into the white extension-cord socket. Print <span class="path">plug_box.stl</span> (on its back) and <span class="path">plug_box_panel.stl</span> (flat). Inside: 108 wide × 32 deep × 128 tall.</p>
+    <figure>
+      <div class="plate"><img src="plug_box.png" alt="The plug box in 3D with its panel off, and a front view as you face the wall: black adapter lying at the bottom, white socket standing on it on your left with the extension cord going up through a slot in the top, the Pi cable bending down through a slot in the floor on your right, two screw holes in the back."></div>
+      <figcaption>Drawn as you face the wall. Socket and cord on your left, out the top; the Pi cable on your right, out the bottom.</figcaption>
+    </figure>
+    <ol class="steps">
+      <li><div><b>Screw the empty box up</b> with 2 self-drilling anchors and their <span class="screw">#8 pan-head screws</span>, through the two holes in the back.</div></li>
+      <li><div><b>Put the plugs in</b> still plugged together: adapter flat at the bottom, its 29 mm side against the back; the socket standing on top of it on your left.</div></li>
+      <li><div><b>Cables.</b> Extension cord up through the top slot; the Pi cable bends down into the gap on your right and out the floor slot.</div></li>
+      <li><div><b>Panel.</b> Slide it straight down into the side grooves from the top; its notch goes over the cord.</div></li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>Hardware</h2>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Screw</th><th>Qty</th><th>Where</th></tr></thead>
+        <tbody>
+          <tr><td class="n">Self-drilling drywall anchors, #8, 75 lb (e.g. E-Z Ancor Twist-N-Lock), with #8 flat-head screws</td><td class="n">8</td><td>6 for the brackets (their screws), 2 for the keyholes</td></tr>
+          <tr><td class="n">#8 × 1-1/4" pan-head screws</td><td class="n">2</td><td>Keyhole slots, into 2 of the anchors, heads left out ~3 mm</td></tr>
+          <tr><td class="n">Plug box: 2 more #8 self-drilling anchors with pan-head screws</td><td class="n">2</td><td>Plug box's back to the wall</td></tr>
+          <tr><td class="n">M2 × 4 or × 5</td><td class="n">2</td><td>PIR board into the under-floor holder</td></tr>
+          <tr><td class="n">Double-sided foam tape</td><td class="n">a few strips</td><td>Holder to the underside of the floor</td></tr>
+          <tr><td class="n">Optional: #2 × 1/4" or M2.5 × 6 self-tapping</td><td class="n">4</td><td>Holder's corners up into the floor</td></tr>
+          <tr><td class="n">M2.5 × 6</td><td class="n">4</td><td>Pi to the tray's posts</td></tr>
+          <tr><td class="n">M3 × 6</td><td class="n">4</td><td>Tray to the shelf</td></tr>
+          <tr><td class="n">M3 × 8 (thumb screw if you have one)</td><td class="n">1</td><td>Front panel tab to the top</td></tr>
+          <tr><td class="n">Case tray instead: M3 × 6 button head</td><td class="n">4</td><td>Case tray to the shelf (in place of the 4 × M3 × 6 above; no M2.5 screws needed)</td></tr>
+          <tr><td class="n">Case tray: 1–2 mm double-sided foam tape</td><td class="n">2 strips</td><td>Under the Pi's case</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">Every hole is sized for the screw to cut its own thread in PLA: drive each one in and back out once before assembly.</p>
+  </section>
+
+  <section>
+    <h2>Printing (Bambu Lab A1 mini, PLA)</h2>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Where in Bambu Studio</th><th>Setting</th><th>Value</th></tr></thead>
+        <tbody>
+          <tr><td>Process › Strength › Walls</td><td>Wall loops</td><td class="n">3</td></tr>
+          <tr><td>Process › Strength › Top/bottom shells</td><td>Top / Bottom shell layers</td><td class="n">5 / 4</td></tr>
+          <tr><td>Process › Strength › Sparse infill</td><td>Density, pattern</td><td class="n">15 %, Gyroid</td></tr>
+          <tr><td>Process › Support</td><td>Enable support</td><td>Off</td></tr>
+          <tr><td>Process › Others › Bed adhesion</td><td>Brim type, width</td><td>Body only: Outer brim only, 5 mm</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">Plate 1: <span class="path">pi_tray.stl</span> (or <span class="path">pi_case_tray.stl</span>, no brim) + <span class="path">front_panel.stl</span> (answer No to "single object with multiple parts", then Arrange). The holder, <span class="path">pir_mount.stl</span>, fits on the same plate; it prints as it comes in, cup bottom down, no brim. Brackets: <span class="path">wall_bracket.stl</span> ×2 and <span class="path">wall_bracket_narrow.stl</span> ×1 on one plate, standing on their back plates as imported, with 4 wall loops, 40 % gyroid infill and a 5 mm brim. Plate 2: <span class="path">body.stl</span> alone, standing on its back plate. Files are in <span class="path">enclosure/out/</span> on the <span class="path">claude/dazzling-hawking-tyhgh7</span> branch.</p>
+  </section>
+</main>
