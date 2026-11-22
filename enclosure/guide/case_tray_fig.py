@@ -27,7 +27,7 @@ for outer, holes in section(t, "z" if False else "y", 0) if False else []:
 x0, x1 = e.CASE_TRAY_X0, e.TRAY_X1; y0, y1 = e.TRAY_Y0 - 2, e.TRAY_Y1 + 2
 ax.add_patch(Rectangle((x0, y0), x1 - x0, y1 - y0, fc="#d9b77a", ec="#555"))
 ax.add_patch(Rectangle((e.IN_X1, y0 - 12), 4, y1 - y0 + 24, fc="#e9e2d0", ec="#555", hatch="//"))
-ax.text(e.IN_X1 + 6, (y0 + y1) / 2, "right wall\n(USB notch)", fontsize=9, va="center")
+ax.text(e.IN_X1 + 6, (y0 + y1) / 2, "USB-notch wall\n(your left)", fontsize=9, va="center")
 ax.add_patch(Rectangle((e.CASE_X0, e.CASE_YC - 30.5), e.PI_CASE_L, e.PI_CASE_W, fc=(0.8, 0.9, 1.0, 0.5), ec="#2a6fb0", lw=1.5, ls="--"))
 ax.text(e.CASE_X0 + 40, e.CASE_YC + 4, "Pi in its clear case bottom\n91.5 x 61 mm, stuck down with\ndouble-sided foam tape", fontsize=9, ha="center", color="#1f4f80")
 ax.add_patch(Rectangle((e.CASE_X1 - 2, e.CASE_YC - 28), 6, 52, fc="#9aa3ab", ec="#555"))

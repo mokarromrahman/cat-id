@@ -52,11 +52,12 @@ ax.add_patch(Polygon([(px - r / 1.4142, flip(py + r / 1.4142)), (px, flip(py + 1
 ax.text(px, flip(py), "round\nhole", ha="center", va="center", fontsize=8)
 # holder outline
 ax.add_patch(Rectangle((px - FX / 2, flip(py + FY / 2)), FX, FY, fc="none", ec=RED, lw=2, ls="--", zorder=8))
-ax.annotate("the holder goes here:\nits back edge touching the wall,\nits left edge 12 mm in from\nthe box's left side,\ncentred on the round hole", (px + FX / 2, flip(py)), (px + 40, flip(py) - 32),
+ax.annotate("the holder goes here:\nits back edge touching the wall,\nits edge 12 mm in from the box's\nRIGHT side (the camera side),\ncentred on the round hole", (px + FX / 2, flip(py)), (px + FX / 2 + 92, flip(py) - 40),
             arrowprops=dict(arrowstyle="-", color=RED, lw=0.8), color=RED, **lab)
 ax.annotate("", (0, flip(py) - 24), (px - FX / 2, flip(py) - 24), arrowprops=dict(arrowstyle="<->", color=RED, lw=1))
 ax.text((px - FX / 2) / 2, flip(py) - 30, "12 mm", ha="center", fontsize=9, color=RED)
 ax.set_xlim(-12, W + 12); ax.set_ylim(flip(D) - 16, 14); ax.set_aspect("equal"); ax.axis("off")
+ax.invert_xaxis()  # as seen facing the wall and looking up: the model's x+ is on your left
 
 # ---- 2. sensor into the holder, on a table (top view of the holder)
 def holder_top(ax):

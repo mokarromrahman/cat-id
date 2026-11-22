@@ -124,14 +124,14 @@ for tx in (e.TRAY_X0 + 3.5, e.TRAY_X1 - 3.5):
     screw_v(ax, tx, e.SHELF_Z1 + e.TRAY_T, 6, 5.5, arrow=False)
 ax.annotate("M3 x 6 screws: tray into the shelf", (e.TRAY_X0 + 3.5, e.SHELF_Z1 + 2), (-75, e.SHELF_Z1 - 8), fontsize=8.5,
             bbox=dict(fc="white", ec="none", alpha=0.9), arrowprops=dict(arrowstyle="-", color="#666", lw=0.6), zorder=9)
-# USB cord loop outside the right wall
+# USB cord loop outside the notched wall (your left)
 x0 = e.OUT_X
 pz = e.FLOOR + e.CASE_T / 2; uz = e.BOARD_Z0 + e.PCB_T + 8
 t = np.linspace(0, 1, 60)
 cx = x0 + 6 + 26 * np.sin(np.pi * t); cz = pz + (uz - pz) * t
 ax.plot(cx, cz, color="#222", lw=2.2, zorder=7)
 ax.add_patch(Rectangle((x0 - 4, pz - 3.5), 12, 7, fc="#444", zorder=7)); ax.add_patch(Rectangle((x0 - 4, uz - 4), 12, 8, fc="#444", zorder=7))
-ax.text(x0 + 36, (pz + uz) / 2, "USB cord loops outside:\nUSB-C plug out of the lower notch,\nUSB-A plug out of the upper notch", fontsize=8.5, va="center")
+ax.text(x0 + 36, (pz + uz) / 2, ha="right", s="USB cord loops outside:\nUSB-C plug out of the lower notch,\nUSB-A plug out of the upper notch", fontsize=8.5, va="center")
 # power cable
 pwr_x = e.BOARD_X0 + e.PI_POWER_X
 ax.plot([pwr_x, pwr_x], [e.OUT_Z + 40, e.BOARD_Z0 + e.PCB_T + 3], color="#222", lw=2.2, zorder=7)
@@ -143,8 +143,9 @@ ax.text(e.OUT_X / 2, e.OUT_Z + 52 + 28, "front panel: slides straight down into 
 move(ax, (12, e.OUT_Z + 50), (12, e.OUT_Z + 6))
 move(ax, (e.OUT_X - 12, e.OUT_Z + 50), (e.OUT_X - 12, e.OUT_Z + 6))
 ax.text(e.OUT_X / 2, -10, "camera window and PIR hole in the floor, looking down at the litterbox", ha="center", fontsize=8.5, color="#444")
-ax.text(e.IN_X0 + 40, e.FLOOR + 3, "phone, screen up, top end left", color="white", fontsize=8, zorder=8)
+ax.text((e.IN_X0 + e.IN_X1) / 2, e.FLOOR + 3, "phone, screen up, top end on your right", ha="center", color="white", fontsize=8, zorder=8)
 ax.text(e.BOARD_X0 + 5, e.BOARD_Z0 + 5, "Pi", color="#1d5c33", fontsize=9, zorder=8)
-ax.set_xlim(-80, 290); ax.set_ylim(-20, 185); ax.set_aspect("equal"); ax.axis("off")
+ax.set_xlim(-170, 380); ax.set_ylim(-20, 185); ax.set_aspect("equal"); ax.axis("off")
+ax.invert_xaxis()  # as seen facing the wall: the model's x+ is on your left
 ax.set_title("Front view (cut through the middle of the phone), panel lifted off", fontsize=11)
 plt.tight_layout(); plt.savefig(sys.argv[2] + "/assembly_front.png", dpi=110, facecolor=BG)

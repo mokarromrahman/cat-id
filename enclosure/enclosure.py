@@ -391,43 +391,68 @@ def bracket_hung(x0, x1, web_t):
     return b
 
 
-# --- Plug pocket: holds the extension cord's socket and the Pi's power adapter together ------
-# The Pi's supply is a CanaKit 5V 2.5A wall plug (prongs on its broad face, cable out of one
-# short end; body roughly 65 x 40 x 30 mm, estimated from photos). Plugged into the NOMA
-# extension cord's socket (~28 x 22 x 50 mm) it makes an L about 80 mm long. This is an open-top
-# pocket screwed to the drywall above the box (2 Hillman #8 anchors, pan heads sunk in
-# counterbores inside the pocket): the pair drops in with the adapter at the bottom, prongs up,
-# and the socket standing on it; the extension cord leaves out of the top, the adapter's
-# micro-USB cable through a slot in either end wall (open at the top so it slides in) and down
-# into the box. Sized loosely; gravity holds it, an optional zip tie through the two holes near
-# the top of the end walls straps it in. Modelled as printed: floor down.
-POCKET_IN = (76.0, 50.0, 60.0)   # inside: along the wall, out from the wall, height
-POCKET_WALL = 3.0
-POCKET_BACK = 5.0
-POCKET_FLOOR = 3.0
-POCKET_SLOT = 9.0                # cable slot width in the end walls
-POCKET_SLOT_BOTTOM = 14.0        # slot stops this far above the floor (the adapter's cable sits low)
+# --- Plug box: a closed wall box for the extension cord's socket + the Pi's power adapter ------
+# Orientation note (applies to the whole file): x+ is on the viewer's LEFT when facing the wall
+# (the viewer looks toward -y), so the body's camera window (low x) is on the viewer's right and
+# its USB notches (high x) on the viewer's left.
+# The pair as the owner plugged it together, measured from a photo beside a caliper plus one
+# caliper reading: the CanaKit 5V 2.5A adapter ~80 mm long x ~48 mm (prong edge to back) x
+# 29 mm thick, its cable leaving one short end ~32 mm from its far edge; the NOMA extension
+# cord's socket ~33 mm wide, standing ~74 mm off the adapter's prong edge, ~17 mm off-centre
+# toward the end away from the cable. On the wall the pair lies flat against the back: socket on
+# top and on the viewer's LEFT (its cord leaves through the top slot, up to hook 11), adapter at
+# the bottom; its cable leaves the adapter's right-hand end, turns down in a bend space and goes
+# out a slot in the floor, down to the camera box. A front panel slides down into grooves in the
+# side walls and closes it, like the camera box's (gravity holds it; a notch matches the top
+# slot). Two Hillman #8 anchors through the back, pan heads sunk inside; screw the box up before
+# the plugs go in. Hung coordinates: x along the wall, y out from the wall (back face 0), z up.
+PLUGBOX_IN = (108.0, 32.0, 128.0)  # inside: along the wall, out from the wall, height
+PLUGBOX_WALL = 4.0                 # side walls (they carry the panel grooves)
+PLUGBOX_BACK = 5.0
+PLUGBOX_END = 3.0                  # floor and top
+PLUGBOX_PANEL_T = 3.0
+PLUGBOX_GROOVE_CLR = 0.4
+PLUGBOX_GROOVE_DEPTH = 1.5
+PLUGBOX_LIP = 2.0
+PLUGBOX_ADAPTER_X = (-28.0, 52.0)  # where the adapter lies (x+ = viewer's left)
+PLUGBOX_TOP_SLOT = (12.0, 48.0)    # cord slot in the top, over the socket (viewer's left)
+PLUGBOX_FLOOR_SLOT = (-50.0, -34.0)  # cable slot in the floor, under the bend space (viewer's right)
+PLUGBOX_SCREWS = ((25.0, 22.0), (-41.0, 100.0))   # (x, z above the floor's top)
 
 
-def plug_pocket_body():
-    iw, idp, ih = POCKET_IN
-    ow, od, oh = iw + 2 * POCKET_WALL, idp + POCKET_BACK + POCKET_WALL, ih + POCKET_FLOOR
-    # x along the wall, y out from the wall (back face at y = 0), z up
-    p = _box(-ow / 2, 0, 0, ow / 2, od, oh)
-    p = bd.fillet(p.edges().filter_by(bd.Axis.Z), 2.0)
-    p -= _box(-iw / 2, POCKET_BACK, POCKET_FLOOR, iw / 2, POCKET_BACK + idp, oh + 1)
-    ymid = POCKET_BACK + idp / 2
-    for sx in (-1, 1):
-        x0 = sx * iw / 2 - (POCKET_WALL + 1 if sx < 0 else -1) * 1.0
-        xa, xb = (-ow / 2 - 1, -iw / 2 + 1) if sx < 0 else (iw / 2 - 1, ow / 2 + 1)
-        p -= _box(xa, ymid - POCKET_SLOT / 2, POCKET_FLOOR + POCKET_SLOT_BOTTOM, xb, ymid + POCKET_SLOT / 2, oh + 1)
-        # zip-tie hole near the top, toward the front, through the end wall
-        p -= _box(xa, POCKET_BACK + idp - 9, oh - 9, xb, POCKET_BACK + idp - 4, oh - 6)
-    # two #8 pan-head screws through the back wall, heads sunk on the inside
-    for sx in (-1, 1):
-        hole = bd.Plane(origin=(sx * 22.0, 0, POCKET_FLOOR + 14.0), x_dir=(1, 0, 0), z_dir=(0, 1, 0))
-        p -= hole * bd.Pos(0, 0, POCKET_BACK / 2) * bd.Cylinder(4.6 / 2, POCKET_BACK + 2)
-        p -= hole * bd.Pos(0, 0, POCKET_BACK - 1.5) * bd.Cylinder(9.8 / 2, 3.0 + 0.01)
+def _plugbox_dims():
+    iw, idp, ih = PLUGBOX_IN
+    gy0 = PLUGBOX_BACK + idp + 0.2
+    gy1 = gy0 + PLUGBOX_PANEL_T + PLUGBOX_GROOVE_CLR
+    return iw, idp, ih, gy0, gy1, gy1 + PLUGBOX_LIP, iw + 2 * PLUGBOX_WALL, ih + 2 * PLUGBOX_END
+
+
+def plug_box_body():
+    iw, idp, ih, gy0, gy1, od, ow, oh = _plugbox_dims()
+    b = _box(-ow / 2, 0, 0, ow / 2, od, oh)
+    b = bd.fillet(b.edges().filter_by(bd.Axis.Y), 2.0)
+    zf, zt = PLUGBOX_END, PLUGBOX_END + ih
+    b -= _box(-iw / 2, PLUGBOX_BACK, zf, iw / 2, od + 1, zt)                       # inside, open front
+    b -= _box(-iw / 2, gy0, zt - 1, iw / 2, od + 1, oh + 1)                        # top stops at the groove
+    b -= _box(-iw / 2 - PLUGBOX_GROOVE_DEPTH, gy0, zf, iw / 2 + PLUGBOX_GROOVE_DEPTH, gy1, oh + 1)  # grooves
+    x0, x1 = PLUGBOX_TOP_SLOT                                                      # cord slot, open to the front
+    b -= _box(x0, PLUGBOX_BACK + 4, zt - 1, x1, od + 1, oh + 1)
+    x0, x1 = PLUGBOX_FLOOR_SLOT                                                    # cable slot, open to the front
+    b -= _box(x0, PLUGBOX_BACK + 4, -1, x1, od + 1, zf + 1)
+    for x, z in PLUGBOX_SCREWS:                                                    # #8 pan heads, sunk inside
+        hole = bd.Plane(origin=(x, 0, zf + z), x_dir=(1, 0, 0), z_dir=(0, 1, 0))
+        b -= hole * bd.Pos(0, 0, PLUGBOX_BACK / 2) * bd.Cylinder(4.6 / 2, PLUGBOX_BACK + 2)
+        b -= hole * bd.Pos(0, 0, PLUGBOX_BACK - 1.5) * bd.Cylinder(9.8 / 2, 3.0 + 0.01)
+    return b
+
+
+def plug_box_panel_hung():
+    iw, idp, ih, gy0, gy1, od, ow, oh = _plugbox_dims()
+    g = PLUGBOX_GROOVE_CLR / 2
+    x0, x1 = -iw / 2 - PLUGBOX_GROOVE_DEPTH + 0.3, iw / 2 + PLUGBOX_GROOVE_DEPTH - 0.3
+    p = _box(x0, gy0 + g, PLUGBOX_END + 0.3, x1, gy0 + g + PLUGBOX_PANEL_T, oh)
+    sx0, sx1 = PLUGBOX_TOP_SLOT                                                    # matching cord notch
+    p -= _box(sx0, gy0 - 1, oh - 14, sx1, gy1 + 1, oh + 1)
     return p
 
 
@@ -495,9 +520,15 @@ def wall_bracket_narrow():
 
 
 @model
-def plug_pocket():
-    """Wall pocket for the extension cord's socket + the Pi's CanaKit adapter. Print floor down."""
-    return _part(_on_bed(plug_pocket_body()), "plug_pocket")
+def plug_box():
+    """Closed wall box for the extension cord's socket + the Pi's CanaKit adapter. Print back down."""
+    return _part(_on_bed(bd.Rot(90, 0, 0) * plug_box_body()), "plug_box")
+
+
+@model
+def plug_box_panel():
+    """The plug box's sliding front panel. Print flat."""
+    return _part(_on_bed(bd.Rot(-90, 0, 0) * plug_box_panel_hung()), "plug_box_panel")
 
 
 @model
@@ -528,7 +559,7 @@ def _shape(x):
 
 
 if __name__ == "__main__":
-    parts = {"body": body(), "pi_tray": pi_tray(), "pi_case_tray": pi_case_tray(), "pir_mount": pir_mount(), "wall_bracket": wall_bracket(), "wall_bracket_narrow": wall_bracket_narrow(), "plug_pocket": plug_pocket(), "front_panel": front_panel()}
+    parts = {"body": body(), "pi_tray": pi_tray(), "pi_case_tray": pi_case_tray(), "pir_mount": pir_mount(), "wall_bracket": wall_bracket(), "wall_bracket_narrow": wall_bracket_narrow(), "plug_box": plug_box(), "plug_box_panel": plug_box_panel(), "front_panel": front_panel()}
     whole = enclosure()
     if "--export" in sys.argv:
         out = Path(__file__).parent / "out"

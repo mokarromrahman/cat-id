@@ -63,5 +63,6 @@ for name, (x0, x1, wt) in e.BRACKETS.items():
     ax.text((x0 + x1) / 2, -e.BRACKET_LEG - 7, {"left": "narrow\n(16 mm)", "middle": "20 mm", "right": "20 mm"}[name], ha="center", va="top", fontsize=9)
 ax.text(W + 6, -60, "6 anchors + 6 screws\nfor the brackets", fontsize=10)
 ax.set_xlim(-20, W + 60); ax.set_ylim(-150, H + 12); ax.set_aspect("equal"); ax.axis("off")
+ax.invert_xaxis()  # as seen facing the wall: the model's x+ is on your left
 fig.suptitle("Wall brackets (built): 3 brackets, 120 mm down the wall, front lip", fontsize=15, fontweight="bold", x=0.01, ha="left")
 plt.tight_layout(rect=(0, 0, 1, 0.94)); plt.savefig(sys.argv[1] + "/brackets.png", dpi=100, facecolor="white")
