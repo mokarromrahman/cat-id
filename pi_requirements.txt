@@ -3,4 +3,4 @@ gpiozero
 lgpio        # Bookworm or newer; use RPi.GPIO instead on older Pi OS
 requests
 python-dotenv
-pillow       # only needed when CAT_ID_ZOOM > 1
+pillow       # the zoom (ZOOM > 1 in phone_control.py); needs: sudo apt install libopenjp2-7

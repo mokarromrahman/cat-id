@@ -51,7 +51,9 @@ them to `/litterbox`. The phone needs no Wi-Fi; only the Pi has to be on the net
 
 1. Phone: Settings > About phone > Software information > tap "Build number" 7 times, then
    Settings > Developer options > turn on "USB debugging". Plug it into the Pi.
-2. Pi: `sudo apt install adb`, then `pip install -r pi_requirements.txt`.
+2. Pi: `sudo apt install adb libopenjp2-7`, then `pip install -r pi_requirements.txt`. Pillow
+   from piwheels needs `libopenjp2-7`; check with
+   `python -c "from PIL import Image"` (`import PIL` alone doesn't load it).
 3. `adb start-server`, then `adb devices`: tap "Allow" (and "Always allow from this
    computer") on the phone; the phone must show as `device`, not `unauthorized`.
 4. `.env` next to `pi_trigger.py`: `SERVER`, `API_KEY`, optional `CAT_ID_USER` (default

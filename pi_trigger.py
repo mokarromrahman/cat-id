@@ -7,7 +7,7 @@ The phone needs no Wi-Fi: adb and the photo copy go over the USB cable, and the 
 the upload over its own network connection.
 
 Wiring: sensor OUT -> GPIO17 (pin 11), VCC -> 5V (pin 2), GND -> pin 6.
-Install: sudo apt install adb; pip install -r pi_requirements.txt
+Install: sudo apt install adb libopenjp2-7; pip install -r pi_requirements.txt
 Before running: adb start-server, then `adb devices` must list the phone as "device"
 (accept the "Allow USB debugging?" prompt on the phone the first time).
 Config in .env: SERVER, API_KEY, optional CAT_ID_USER (default pi), CAT_ID_LOCATION.
