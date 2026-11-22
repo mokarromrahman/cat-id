@@ -12,13 +12,14 @@ Before running: adb start-server, then `adb devices` must list the phone as "dev
 (accept the "Allow USB debugging?" prompt on the phone the first time).
 Config in .env: SERVER, API_KEY, optional CAT_ID_USER (default pi), CAT_ID_LOCATION.
 """
+import io
 import os
 import time
 
 import requests
 from gpiozero import MotionSensor
 
-from phone_control import PhoneController, trigger_covert_photo
+from phone_control import ZOOM, ZOOM_X, ZOOM_Y, PhoneController, crop_zoom, trigger_covert_photo
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -41,9 +42,14 @@ def capture_and_send(phone: PhoneController):
     image_buffer, filename = phone.fetch_most_recent_photo()
     if image_buffer:
         try:
+            photo = crop_zoom(image_buffer.getvalue(), ZOOM, ZOOM_X, ZOOM_Y)
+        except Exception as e:  # a bad crop shouldn't lose the visit: send the whole photo
+            print("zoom failed, sending the whole photo:", e)
+            photo = image_buffer.getvalue()
+        try:
             r = requests.post(
                 SERVER,
-                files={"file": (filename, image_buffer, "image/jpeg")},
+                files={"file": (filename, io.BytesIO(photo), "image/jpeg")},
                 data={"key": API_KEY, "user": CAT_ID_USER,
                       **({"location": CAT_ID_LOCATION} if CAT_ID_LOCATION else {})},
                 timeout=60,

@@ -59,6 +59,11 @@ them to `/litterbox`. The phone needs no Wi-Fi; only the Pi has to be on the net
 5. `./pi_start.sh`: starts the adb server, waits for the phone, turns on the phone's
    "Protect battery" (stops charging at 85%), activates `~/venv/cat-id` (or `CAT_ID_VENV`)
    and runs `pi_trigger.py`. Run it again after every reboot (the adb server doesn't survive one).
+6. Zoom: each photo is cropped on the Pi before upload (the phone stays at 1x). The numbers are
+   `ZOOM`, `ZOOM_X`, `ZOOM_Y` at the top of `phone_control.py` (2x around 0.68, 0.58; `ZOOM = 1`
+   turns it off). Try others first: `python phone_control.py some_photo.jpg --zoom 2 --x 0.68
+   --y 0.58` writes `zoom_test_full.jpg` (red box) and `zoom_test_crop.jpg`; without a photo it
+   takes a new one with the phone. Restart the service after changing them.
 
 ## 5. Improve over time
 Every capture is saved to `inbox/` with the guess in its name. Label the misses at
