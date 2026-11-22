@@ -1,18 +1,25 @@
 """Runs on the Raspberry Pi 3.
 
-IR/PIR sensor trips -> grab a still from the phone (IP Webcam app) ->
-POST it to the cat-id server.
+IR/PIR sensor trips -> phone_control.py takes a photo on the phone over adb (USB) and
+copies it to the Pi -> POST it to the cat-id server.
+
+The phone needs no Wi-Fi: adb and the photo copy go over the USB cable, and the Pi does
+the upload over its own network connection.
 
 Wiring: sensor OUT -> GPIO17 (pin 11), VCC -> 5V (pin 2), GND -> pin 6.
-Install: sudo apt install python3-gpiozero python3-requests
+Install: sudo apt install adb; pip install -r pi_requirements.txt
+Before running: adb start-server, then `adb devices` must list the phone as "device"
+(accept the "Allow USB debugging?" prompt on the phone the first time).
+Config in .env: SERVER, API_KEY, optional CAT_ID_USER (default pi), CAT_ID_LOCATION.
 """
+import io
 import os
 import time
 
 import requests
 from gpiozero import MotionSensor
 
-from phone_control import PhoneController, trigger_covert_photo
+from phone_control import ZOOM, ZOOM_X, ZOOM_Y, PhoneController, crop_zoom, trigger_covert_photo
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -35,9 +42,14 @@ def capture_and_send(phone: PhoneController):
     image_buffer, filename = phone.fetch_most_recent_photo()
     if image_buffer:
         try:
+            photo = crop_zoom(image_buffer.getvalue(), ZOOM, ZOOM_X, ZOOM_Y)
+        except Exception as e:  # a bad crop shouldn't lose the visit: send the whole photo
+            print("zoom failed, sending the whole photo:", e)
+            photo = image_buffer.getvalue()
+        try:
             r = requests.post(
                 SERVER,
-                files={"file": (filename, image_buffer, "image/jpeg")},
+                files={"file": (filename, io.BytesIO(photo), "image/jpeg")},
                 data={"key": API_KEY, "user": CAT_ID_USER,
                       **({"location": CAT_ID_LOCATION} if CAT_ID_LOCATION else {})},
                 timeout=60,
