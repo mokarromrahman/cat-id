@@ -565,7 +565,8 @@ if __name__ == "__main__":
         out = Path(__file__).parent / "out"
         out.mkdir(exist_ok=True)
         for old in out.glob("*"):
-            old.unlink()
+            if not old.name.startswith("light_"):  # light_housing.py's parts
+                old.unlink()
         for name, p in parts.items():
             s = _shape(p)
             bb = s.bounding_box()
